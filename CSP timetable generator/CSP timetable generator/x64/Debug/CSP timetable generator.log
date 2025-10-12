@@ -1,0 +1,5 @@
+﻿  CSP timetable generator.cpp
+C:\Users\Lenovo\source\repos\CSP timetable generator\CSP timetable generator\CSP timetable generator.cpp(414,33): warning C4267: '=': conversion from 'size_t' to 'int', possible loss of data
+  CSP timetable generator.vcxproj -> C:\Users\Lenovo\source\repos\CSP timetable generator\x64\Debug\CSP timetable generator.exe
+  'pwsh.exe' is not recognized as an internal or external command,
+  operable program or batch file.

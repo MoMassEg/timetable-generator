@@ -79,12 +79,12 @@ const Instructors = () => {
   };
 
   // Toggle course selection
-  const handleCourseToggle = (courseName) => {
+  const handleCourseToggle = (courseID) => {
     setFormData((prev) => ({
       ...prev,
-      qualifiedCourses: prev.qualifiedCourses.includes(courseName)
-        ? prev.qualifiedCourses.filter((name) => name !== courseName)
-        : [...prev.qualifiedCourses, courseName],
+      qualifiedCourses: prev.qualifiedCourses.includes(courseID)
+        ? prev.qualifiedCourses.filter((name) => name !== courseID)
+        : [...prev.qualifiedCourses, courseID],
     }));
   };
 
@@ -206,11 +206,11 @@ const Instructors = () => {
                     >
                       <input
                         type="checkbox"
-                        checked={formData.qualifiedCourses.includes(course.courseName)}
-                        onChange={() => handleCourseToggle(course.courseName)}
+                        checked={formData.qualifiedCourses.includes(course.courseID)}
+                        onChange={() => handleCourseToggle(course.courseID)}
                         style={{ marginRight: "0.5rem" }}
                       />
-                      {course.courseName} ({course.type})
+                      {course.courseID} ({course.type})
                     </label>
                   ))}
                 </div>
