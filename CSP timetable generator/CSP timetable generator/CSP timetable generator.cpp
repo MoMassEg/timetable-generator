@@ -17,6 +17,7 @@ using namespace std;
 
 struct Course {
     string courseID, courseName, type;
+    string labType;
     int duration;
 };
 
@@ -32,6 +33,7 @@ struct TA {
 
 struct Room {
     string roomID, type;
+    string labType;
     int capacity;
 };
 
@@ -181,9 +183,8 @@ bool solve(int sectionIdx) {
     }
 
     vector<string>& coursesToSchedule = sections[sectionIdx].assignedCourses;
-
     bool allScheduled = true;
-    for (auto& courseID : coursesToSchedule) {
+    for (const auto& courseID : coursesToSchedule) {
         if (scheduledCourses[sectionIdx].find(courseID) == scheduledCourses[sectionIdx].end()) {
             allScheduled = false;
             break;
@@ -195,7 +196,7 @@ bool solve(int sectionIdx) {
     }
 
     string courseID = "";
-    for (auto& cid : coursesToSchedule) {
+    for (const auto& cid : coursesToSchedule) {
         if (scheduledCourses[sectionIdx].find(cid) == scheduledCourses[sectionIdx].end()) {
             courseID = cid;
             break;
@@ -203,17 +204,16 @@ bool solve(int sectionIdx) {
     }
 
     if (getCourse.find(courseID) == getCourse.end()) {
-        return false; 
+        return false;
     }
 
     Course course = getCourse[courseID];
-
     vector<int> targetSections;
 
     if (course.type == "Lecture") {
         string groupID = sections[sectionIdx].groupID;
 
-        for (auto& secID : groupToSections[groupID]) {
+        for (const auto& secID : groupToSections[groupID]) {
             int idx = sectionToIndex[secID];
             if (scheduledCourses[idx].find(courseID) != scheduledCourses[idx].end()) {
                 scheduledCourses[sectionIdx].insert(courseID);
@@ -221,7 +221,7 @@ bool solve(int sectionIdx) {
             }
         }
 
-        for (auto& secID : groupToSections[groupID]) {
+        for (const auto& secID : groupToSections[groupID]) {
             targetSections.push_back(sectionToIndex[secID]);
         }
     }
@@ -233,41 +233,57 @@ bool solve(int sectionIdx) {
 
     vector<string> candidates;
     if (course.type == "Lecture") {
-        for (auto& inst : instructors) {
+        for (const auto& inst : instructors) {
             if (isQualified(inst.instructorID, courseID, false)) {
                 candidates.push_back(inst.instructorID);
             }
         }
     }
     else {
-        for (auto& ta : tas) {
+        for (const auto& ta : tas) {
             if (isQualified(ta.taID, courseID, true)) {
                 candidates.push_back(ta.taID);
             }
         }
     }
 
-    
     if (candidates.empty()) {
         return false;
     }
+
+    bool flag = true;
+
     for (int slot = 0; slot < SLOTS_MAX; slot++) {
-        for (auto& instructorID : candidates) {
-            for (auto& room : rooms) {
+        for (const auto& instructorID : candidates) {
+            for (const auto& room : rooms) {
                 if (room.type != course.type) continue;
+
+                if (course.type == "Lab" && !course.labType.empty()) {
+                    if (room.labType != course.labType) {
+                        continue;
+                    }
+                }
+
                 if (room.capacity < totalStudents) continue;
 
-                if (valid(targetSections, slot, course.duration, instructorID, room.roomID)) {
-                    place(targetSections, courseID, course.type, course.duration, instructorID, room.roomID, slot);
-                    if (solve(sectionIdx)) {
-                        return true;
-                    }
-
-                    remove(targetSections, courseID, instructorID, room.roomID, slot, course.duration);
+                if (!valid(targetSections, slot, course.duration, instructorID, room.roomID)) {
+                    continue;
                 }
+
+                flag = false;
+                place(targetSections, courseID, course.type, course.duration, instructorID, room.roomID, slot);
+
+                if (solve(sectionIdx)) {
+                    return true;
+                }
+
+                remove(targetSections, courseID, instructorID, room.roomID, slot, course.duration);
             }
         }
     }
+
+    if (flag)
+        return false;
 
     return false;
 }
@@ -302,10 +318,10 @@ void parseInputData(const json& inputData) {
             course.courseName = c.value("courseName", "");
 
             string type = c.value("type", "");
-            if (type == "lec" || type == "lecture" || type == "Lecture") {
+            if (type == "lec" || type == "Lec" || type == "lecture" || type == "Lecture") {
                 course.type = "Lecture";
             }
-            else if (type == "tut" || type == "tutorial" || type == "Tutorial") {
+            else if (type == "tut" || type == "Tut" || type == "tutorial" || type == "Tutorial") {
                 course.type = "Tutorial";
             }
             else if (type == "lab" || type == "Lab") {
@@ -314,6 +330,8 @@ void parseInputData(const json& inputData) {
             else {
                 course.type = type;
             }
+
+            course.labType = c.value("labType", "");
 
             course.duration = c.value("duration", 1);
             courses.push_back(course);
@@ -364,6 +382,8 @@ void parseInputData(const json& inputData) {
             else {
                 room.type = type;
             }
+
+            room.labType = r.value("labType", "");
 
             room.capacity = r.value("capacity", 0);
             rooms.push_back(room);
@@ -440,6 +460,11 @@ json timetableToJson() {
                 slot["courseID"] = Timetable[i][j].courseID;
                 slot["courseName"] = getCourse[Timetable[i][j].courseID].courseName;
                 slot["type"] = Timetable[i][j].type;
+
+                if (getCourse[Timetable[i][j].courseID].type == "Lab") {
+                    slot["labType"] = getCourse[Timetable[i][j].courseID].labType;
+                }
+
                 slot["roomID"] = Timetable[i][j].roomID;
                 slot["instructorID"] = Timetable[i][j].instructorID;
                 slot["duration"] = Timetable[i][j].duration;
@@ -467,31 +492,32 @@ int main() {
     Server svr;
 
     svr.Post("/api/schedule", [](const Request& req, Response& res) {
-            json inputData = json::parse(req.body);
+        json inputData = json::parse(req.body);
 
-            parseInputData(inputData);
+        parseInputData(inputData);
 
-            bool success = solve(0);
+        bool success = solve(0);
 
-            json response;
-            if (success) {
+        json response;
+        if (success) {
 
-                response = timetableToJson();
-            }
-            else {
-                response["success"] = false;
-                response["error"] = "No valid solution found";
-                response["suggestions"] = json::array({
-                    "Check if there are enough rooms for all session types",
-                    "Verify sufficient qualified instructors/TAs",
-                    "Consider increasing time slots (current: " + to_string(SLOTS_MAX) + ")",
-                    "Ensure room capacities are sufficient for student counts"
-                    });
-            }
+            response = timetableToJson();
+        }
+        else {
+            response["success"] = false;
+            response["error"] = "No valid solution found";
+            response["suggestions"] = json::array({
+                "Check if there are enough rooms for all session types",
+                "Verify sufficient qualified instructors/TAs",
+                "Consider increasing time slots (current: " + to_string(SLOTS_MAX) + ")",
+                "Ensure room capacities are sufficient for student counts",
+                "Verify lab types match between courses and rooms (e.g., Computer Lab, Physics Lab)"
+                });
+        }
 
-            res.set_content(response.dump(2), "application/json");
-            res.set_header("Access-Control-Allow-Origin", "*");
-            res.status = success ? 200 : 400;
+        res.set_content(response.dump(2), "application/json");
+        res.set_header("Access-Control-Allow-Origin", "*");
+        res.status = success ? 200 : 400;
         });
 
     svr.Options("/api/schedule", [](const Request& req, Response& res) {
@@ -502,7 +528,7 @@ int main() {
         });
 
     cout << "Timetable Scheduling API Server" << endl;
-    cout << "Server running on: http://localhost:8080"<<endl;
+    cout << "Server running on: http://localhost:8080" << endl;
 
     svr.listen("0.0.0.0", 8080);
 
