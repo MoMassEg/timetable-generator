@@ -1,5 +1,6 @@
 const express = require("express");
-const Section = require("../models/Section");
+const Section = require("../models/Section.js");
+const Group = require("../models/Group");
 
 const router = express.Router();
 
@@ -30,6 +31,16 @@ router.post("/", async (req, res) => {
     const { sectionID, groupID, year, studentCount, assignedCourses } = req.body;
     const newSection = new Section({ sectionID, groupID, year, studentCount, assignedCourses });
     await newSection.save();
+    const group = await Group.findOne({ groupID });
+    if (!group) {
+      await Section.deleteOne({ sectionID });
+      return res.status(404).json({ error: "Group not found, section creation reverted." });
+    }
+
+    if (!group.sections.includes(sectionID)) {
+      group.sections.push(sectionID);
+      await group.save();
+    }
     res.status(201).json(newSection);
   } catch (err) {
     res.status(400).json({ error: err.message });

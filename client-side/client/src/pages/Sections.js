@@ -51,6 +51,8 @@ const Sections = () => {
   };
 
   const handleSubmit = async (e) => {
+    console.log("Form submitted:", formData); 
+
     e.preventDefault();
     try {
       if (editingSection) {
@@ -196,7 +198,7 @@ const Sections = () => {
             });
           }}
         />
-        {c.courseID} - {c.name}
+        {c.courseID} 
       </label>
     ))}
   </div>

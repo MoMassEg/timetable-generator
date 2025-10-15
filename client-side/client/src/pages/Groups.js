@@ -5,18 +5,15 @@ const API_URL = "http://localhost:5000/api/groups";
 
 const Groups = () => {
   const [groups, setGroups] = useState([]);
-  const [sections, setSections] = useState([]);
   const [showModal, setShowModal] = useState(false);
   const [editingGroup, setEditingGroup] = useState(null);
   const [formData, setFormData] = useState({
     groupID: "",
     yearID: 1,
-    sections: [],
   });
 
   useEffect(() => {
     fetchGroups();
-    fetchSections();
   }, []);
 
   const fetchGroups = async () => {
@@ -28,15 +25,7 @@ const Groups = () => {
     }
   };
 
-  const fetchSections = async () => {
-    try {
-      const res = await axios.get("http://localhost:5000/api/sections");
-      setSections(res.data);
-    } catch (err) {
-      console.error(err);
-    }
-  };
-
+ 
   const handleSubmit = async (e) => {
     e.preventDefault();
     try {
@@ -57,7 +46,6 @@ const Groups = () => {
     setFormData({
       groupID: group.groupID,
       yearID: group.yearID,
-      sections: group.sections || [],
     });
     setShowModal(true);
   };
@@ -73,7 +61,7 @@ const Groups = () => {
   };
 
   const resetForm = () => {
-    setFormData({ groupID: "", yearID: 1, sections: [] });
+    setFormData({ groupID: "", yearID: 1 });
     setEditingGroup(null);
     setShowModal(false);
   };
@@ -128,33 +116,6 @@ const Groups = () => {
                   onChange={(e) => setFormData({ ...formData, yearID: parseInt(e.target.value) })}>
                   {[1, 2, 3, 4].map((y) => <option key={y} value={y}>Year {y}</option>)}
                 </select>
-              </div>
-
-              <div className="form-group">
-                <label>Sections</label>
-                <div className="flex flex-col max-h-40 overflow-y-auto border rounded p-2">
-                  {sections.map((s) => (
-                    <label key={s._id} className="inline-flex items-center mb-1">
-                      <input
-                        type="checkbox"
-                        className="mr-2"
-                        value={s.sectionID}
-                        checked={formData.sections.includes(s.sectionID)}
-                        onChange={(e) => {
-                          const value = e.target.value;
-                          setFormData((prev) => {
-                            if (prev.sections.includes(value)) {
-                              return { ...prev, sections: prev.sections.filter((id) => id !== value) };
-                            } else {
-                              return { ...prev, sections: [...prev.sections, value] };
-                            }
-                          });
-                        }}
-                      />
-                      {s.sectionID} - {s.sectionName}
-                    </label>
-                  ))}
-                </div>
               </div>
 
               <div className="modal-footer">

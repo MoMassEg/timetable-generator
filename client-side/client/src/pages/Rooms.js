@@ -9,6 +9,7 @@ const Rooms = () => {
   const [formData, setFormData] = useState({
     roomID: "",
     type: "lec",
+    labType: "",
     capacity: 1,
   });
 
@@ -47,6 +48,7 @@ const Rooms = () => {
     setFormData({
       roomID: room.roomID,
       type: room.type,
+      labType: room.labType || "",
       capacity: room.capacity,
     });
     setShowModal(true);
@@ -65,7 +67,7 @@ const Rooms = () => {
   const resetForm = () => {
     setShowModal(false);
     setEditingRoom(null);
-    setFormData({ roomID: "", type: "lec", capacity: 1 });
+    setFormData({ roomID: "", type: "lec",labType: "", capacity: 1 });
   };
 
   return (
@@ -87,6 +89,7 @@ const Rooms = () => {
               <th>#</th>
               <th>Room ID</th>
               <th>Type</th>
+              <th>labType</th>
               <th>Capacity</th>
               <th>Actions</th>
             </tr>
@@ -97,6 +100,7 @@ const Rooms = () => {
                 <td>{index + 1}</td>
                 <td>{room.roomID}</td>
                 <td>{room.type}</td>
+                <td>{room.labType}</td>
                 <td>{room.capacity}</td>
                 <td>
                   <button
@@ -161,6 +165,17 @@ const Rooms = () => {
                   <option value="lab">Lab</option>
                   <option value="tut">Tutorial</option>
                 </select>
+              </div>
+              <div className="form-group">
+                <label>lab Type</label>
+                <input
+                  type="text"
+                  className="form-input"
+                  value={formData.labType}
+                  onChange={(e) =>
+                    setFormData({ ...formData, labType: e.target.value })
+                  }
+                />
               </div>
 
               <div className="form-group">

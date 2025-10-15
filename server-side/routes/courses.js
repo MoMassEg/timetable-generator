@@ -24,8 +24,8 @@ router.get("/:id", async (req, res) => {
 
 router.post("/", async (req, res) => {
   try {
-    const { courseID, courseName, type, duration } = req.body;
-    const newCourse = new Course({ courseID, courseName, type, duration });
+    const { courseID, courseName, type,labType, duration } = req.body;
+    const newCourse = new Course({ courseID, courseName, type,labType, duration });
     await newCourse.save();
     res.status(201).json(newCourse);
   } catch (err) {

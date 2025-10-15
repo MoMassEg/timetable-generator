@@ -26,8 +26,8 @@ router.get("/:id", async (req, res) => {
 // Create room
 router.post("/", async (req, res) => {
   try {
-    const { roomID, type, capacity } = req.body;
-    const newRoom = new Room({ roomID, type, capacity });
+    const { roomID, type,labType, capacity } = req.body;
+    const newRoom = new Room({ roomID, type,labType, capacity });
     await newRoom.save();
     res.status(201).json(newRoom);
   } catch (err) {

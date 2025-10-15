@@ -4,7 +4,7 @@ const groupSchema = new mongoose.Schema(
   {
     groupID: { type: String, required: true, unique: true },
     yearID: { type: Number, required: true },
-    sections: [{ type: String }], // Array of section IDs
+    sections: [{ type: String }],
   },
   { timestamps: true }
 );

@@ -7,7 +7,6 @@ import {
   MapPin, 
   UserCheck, 
   Grid3X3,
-  BarChart3
 } from 'lucide-react';
 
 const Layout = ({ children }) => {
@@ -16,8 +15,8 @@ const Layout = ({ children }) => {
     { path: '/instructors', label: 'Instructors', icon: UserCheck },
     { path: '/ta', label: 'TA', icon: UserCheck },
     { path: '/rooms', label: 'Rooms', icon: MapPin },
-    { path: '/sections', label: 'Sections', icon: Users },
     { path: '/groups', label: 'Groups', icon: Grid3X3 },
+    { path: '/sections', label: 'Sections', icon: Users },
     { path: '/timetable', label: 'View Timetable', icon: Calendar },
   ];
 

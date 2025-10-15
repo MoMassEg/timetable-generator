@@ -9,6 +9,7 @@ const Courses = () => {
     courseID: "",
     courseName: "",
     type: "lec",
+    labType: "",
     duration: 1,
   });
 
@@ -16,7 +17,6 @@ const Courses = () => {
     fetchCourses();
   }, []);
 
-  // Fetch all courses
   const fetchCourses = async () => {
     try {
       const res = await axios.get("http://localhost:5000/api/courses");
@@ -26,7 +26,6 @@ const Courses = () => {
     }
   };
 
-  // Handle form submit
   const handleSubmit = async (e) => {
     e.preventDefault();
     try {
@@ -45,19 +44,18 @@ const Courses = () => {
     }
   };
 
-  // Edit course
   const handleEdit = (course) => {
     setEditingCourse(course);
     setFormData({
       courseID: course.courseID,
       courseName: course.courseName,
       type: course.type,
+      labType: course.labType || "",
       duration: course.duration,
     });
     setShowModal(true);
   };
 
-  // Delete course
   const handleDelete = async (id) => {
     if (window.confirm("Are you sure you want to delete this course?")) {
       try {
@@ -69,10 +67,9 @@ const Courses = () => {
     }
   };
 
-  // Reset form
   const resetForm = () => {
     setEditingCourse(null);
-    setFormData({ courseID: "", courseName: "", type: "lec", duration: 1 });
+    setFormData({ courseID: "", courseName: "", type: "lec", labType: "", duration: 1 });
     setShowModal(false);
   };
 
@@ -93,6 +90,7 @@ const Courses = () => {
                 <th>ID</th>
                 <th>Name</th>
                 <th>Type</th>
+                <th>labType</th>
                 <th>Duration</th>
                 <th>Actions</th>
               </tr>
@@ -103,6 +101,7 @@ const Courses = () => {
                   <td>{course.courseID}</td>
                   <td>{course.courseName}</td>
                   <td>{course.type}</td>
+                  <td>{course.labType}</td>
                   <td>{course.duration}</td>
                   <td>
                     <button
@@ -133,7 +132,6 @@ const Courses = () => {
         </div>
       </div>
 
-      {/* Modal */}
       {showModal && (
         <div className="modal-overlay">
           <div className="modal">
@@ -182,6 +180,18 @@ const Courses = () => {
                   <option value="tut">tut</option>
                   <option value="lab">lab</option>
                 </select>
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">lab Type</label>
+                <input
+                  type="text"
+                  className="form-input"
+                  value={formData.labType}
+                  onChange={(e) =>
+                    setFormData({ ...formData, labType: e.target.value })
+                  }
+                />
               </div>
 
               <div className="form-group">

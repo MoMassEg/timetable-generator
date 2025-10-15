@@ -17,7 +17,6 @@ const Instructors = () => {
     fetchCourses();
   }, []);
 
-  // Fetch instructors
   const fetchInstructors = async () => {
     try {
       const res = await axios.get("http://localhost:5000/api/instructors");
@@ -27,7 +26,6 @@ const Instructors = () => {
     }
   };
 
-  // Fetch courses
   const fetchCourses = async () => {
     try {
       const res = await axios.get("http://localhost:5000/api/courses");
@@ -37,7 +35,6 @@ const Instructors = () => {
     }
   };
 
-  // Submit form
   const handleSubmit = async (e) => {
     e.preventDefault();
     try {
@@ -56,7 +53,6 @@ const Instructors = () => {
     }
   };
 
-  // Edit instructor
   const handleEdit = (ins) => {
     setEditingInstructor(ins);
     setFormData({
@@ -67,7 +63,6 @@ const Instructors = () => {
     setShowModal(true);
   };
 
-  // Delete instructor
   const handleDelete = async (id) => {
     if (!window.confirm("Are you sure you want to delete this instructor?")) return;
     try {
@@ -78,7 +73,6 @@ const Instructors = () => {
     }
   };
 
-  // Toggle course selection
   const handleCourseToggle = (courseID) => {
     setFormData((prev) => ({
       ...prev,
@@ -88,7 +82,6 @@ const Instructors = () => {
     }));
   };
 
-  // Reset form
   const resetForm = () => {
     setShowModal(false);
     setEditingInstructor(null);
@@ -150,7 +143,6 @@ const Instructors = () => {
         </div>
       </div>
 
-      {/* Modal */}
       {showModal && (
         <div className="modal-overlay">
           <div className="modal">

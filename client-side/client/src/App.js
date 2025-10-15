@@ -13,13 +13,12 @@ import TimetableView from './pages/TimetableView';
 import Ta from './pages/Ta';
 import './App.css';
 
-// Create a client
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
       refetchOnWindowFocus: false,
       retry: 1,
-      staleTime: 5 * 60 * 1000, // 5 minutes
+      staleTime: 5 * 60 * 1000, 
     },
   },
 });

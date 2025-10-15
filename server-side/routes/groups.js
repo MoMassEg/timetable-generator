@@ -26,8 +26,8 @@ router.get("/:id", async (req, res) => {
 // Create group
 router.post("/", async (req, res) => {
   try {
-    const { groupID, yearID, sections } = req.body;
-    const newGroup = new Group({ groupID, yearID, sections });
+    const { groupID, yearID } = req.body;
+    const newGroup = new Group({ groupID, yearID });
     await newGroup.save();
     res.status(201).json(newGroup);
   } catch (err) {
