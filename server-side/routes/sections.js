@@ -4,7 +4,6 @@ const Group = require("../models/Group");
 
 const router = express.Router();
 
-// Get all sections
 router.get("/", async (req, res) => {
   try {
     const sections = await Section.find();
@@ -14,7 +13,6 @@ router.get("/", async (req, res) => {
   }
 });
 
-// Get section by ID
 router.get("/:id", async (req, res) => {
   try {
     const section = await Section.findById(req.params.id);
@@ -25,7 +23,6 @@ router.get("/:id", async (req, res) => {
   }
 });
 
-// Create new section
 router.post("/", async (req, res) => {
   try {
     const { sectionID, groupID, year, studentCount, assignedCourses } = req.body;
@@ -47,7 +44,6 @@ router.post("/", async (req, res) => {
   }
 });
 
-// Update section
 router.put("/:id", async (req, res) => {
   try {
     const updated = await Section.findByIdAndUpdate(req.params.id, req.body, { new: true });
@@ -58,7 +54,6 @@ router.put("/:id", async (req, res) => {
   }
 });
 
-// Delete section
 router.delete("/:id", async (req, res) => {
   try {
     const deleted = await Section.findByIdAndDelete(req.params.id);

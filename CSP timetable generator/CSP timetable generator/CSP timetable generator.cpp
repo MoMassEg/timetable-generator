@@ -1,4 +1,5 @@
-﻿#include "httplib.h"
+﻿
+#include "httplib.h"
 #include <nlohmann/json.hpp>
 #include <iostream>
 #include <vector>
@@ -106,6 +107,22 @@ int getTotalStudents(vector<int>& sectionIndices) {
         total += sections[idx].studentCount;
     }
     return total;
+}
+
+string getInstructorName(string instructorID) {
+    for (const auto& inst : instructors) {
+        if (inst.instructorID == instructorID) {
+            return inst.name;
+        }
+    }
+
+    for (const auto& ta : tas) {
+        if (ta.taID == instructorID) {
+            return ta.name;
+        }
+    }
+
+    return "";
 }
 
 bool valid(vector<int>& targetSections, int slot, int duration, string instructorID, string roomID) {
@@ -424,6 +441,9 @@ void parseInputData(const json& inputData) {
                 section.assignedCourses = s["courses"].get<vector<string>>();
             }
 
+            for (int i = 0; i < section.assignedCourses.size(); i++)
+                cout << section.assignedCourses[i] << endl;
+
             sections.push_back(section);
 
             sectionToIndex[section.sectionID] = idx;
@@ -461,12 +481,9 @@ json timetableToJson() {
                 slot["courseName"] = getCourse[Timetable[i][j].courseID].courseName;
                 slot["type"] = Timetable[i][j].type;
 
-                if (getCourse[Timetable[i][j].courseID].type == "Lab") {
-                    slot["labType"] = getCourse[Timetable[i][j].courseID].labType;
-                }
-
                 slot["roomID"] = Timetable[i][j].roomID;
                 slot["instructorID"] = Timetable[i][j].instructorID;
+                slot["instructorName"] = getInstructorName(Timetable[i][j].instructorID);
                 slot["duration"] = Timetable[i][j].duration;
 
                 if (Timetable[i][j].duration == 2) {
@@ -511,7 +528,7 @@ int main() {
                 "Verify sufficient qualified instructors/TAs",
                 "Consider increasing time slots (current: " + to_string(SLOTS_MAX) + ")",
                 "Ensure room capacities are sufficient for student counts",
-                "Verify lab types match between courses and rooms (e.g., Computer Lab, Physics Lab)"
+                "Verify lab types match between courses and rooms (e.g., Computer Lab, Physics Lab)" 
                 });
         }
 

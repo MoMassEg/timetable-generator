@@ -1,4 +1,3 @@
-// routes/instructorRoutes.js
 const express = require("express");
 const Instructor = require("../models/Instructor.js");
 const router = express.Router();

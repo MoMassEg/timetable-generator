@@ -7,24 +7,37 @@ const Section = require("../models/Section");
 const TA = require("../models/TAs");
 const router = express.Router();
 
-// GET aggregated data
 router.get("/", async (req, res) => {
   try {
-    const courses = await Course.find({}, { _id: 0, __v: 0, createdAt: 0, updatedAt: 0 });
-    const instructors = await Instructor.find({}, { _id: 0, __v: 0, createdAt: 0, updatedAt: 0 });
-    const tas = await TA.find({}, { _id: 0, __v: 0, createdAt: 0, updatedAt: 0 });
-    const rooms = await Room.find({}, { _id: 0, __v: 0, createdAt: 0, updatedAt: 0 });
-    const groups = await Group.find({}, { _id: 0, __v: 0, createdAt: 0, updatedAt: 0 });
-    const sections = await Section.find({}, { _id: 0, __v: 0, createdAt: 0, updatedAt: 0 });
+    const courses = await Course.find().sort({ priority: -1 });
+    const instructors = await Instructor.find();
+    const tas = await TA.find();
+    const rooms = await Room.find();
+    const groups = await Group.find();
+    const sections = await Section.find();
 
-    // Rename some fields to match your response (like Section.courses instead of assignedCourses)
-    const formattedSections = sections.map((s) => ({
-      sectionID: s.sectionID,
-      groupID: s.groupID,
-      year: s.year,
-      studentCount: s.studentCount,
-      courses: s.assignedCourses,
-    }));
+    const coursePriorityMap = {};
+    courses.forEach(course => {
+      coursePriorityMap[course.courseID] = course.priority || 0;
+    });
+
+    const formattedSections = sections.map((s) => {
+      const sortedCourses = s.assignedCourses && s.assignedCourses.length > 0
+        ? [...s.assignedCourses].sort((courseIDA, courseIDB) => {
+            const priorityA = coursePriorityMap[courseIDA] || 0;
+            const priorityB = coursePriorityMap[courseIDB] || 0;
+            return priorityB - priorityA;
+          })
+        : [];
+
+      return {
+        sectionID: s.sectionID,
+        groupID: s.groupID,
+        year: s.year,
+        studentCount: s.studentCount,
+        courses: sortedCourses,
+      };
+    });
 
     res.json({
       courses,
@@ -35,8 +48,8 @@ router.get("/", async (req, res) => {
       sections: formattedSections,
     });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Server error" });
+    console.error("Error in /api/data:", err);
+    res.status(500).json({ error: "Server error", message: err.message });
   }
 });
 

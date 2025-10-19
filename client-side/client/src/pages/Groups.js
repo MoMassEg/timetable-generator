@@ -114,7 +114,7 @@ const Groups = () => {
                 <label>Year</label>
                 <select className="input" value={formData.yearID} 
                   onChange={(e) => setFormData({ ...formData, yearID: parseInt(e.target.value) })}>
-                  {[1, 2, 3, 4].map((y) => <option key={y} value={y}>Year {y}</option>)}
+                  {[1, 2, 3, 4, 5].map((y) => <option key={y} value={y}>Year {y}</option>)}
                 </select>
               </div>
 

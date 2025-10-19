@@ -2,7 +2,6 @@ const express = require("express");
 const Room = require("../models/Room.js");
 const router = express.Router();
 
-// Get all rooms
 router.get("/", async (req, res) => {
   try {
     const rooms = await Room.find();
@@ -12,7 +11,6 @@ router.get("/", async (req, res) => {
   }
 });
 
-// Get room by ID
 router.get("/:id", async (req, res) => {
   try {
     const room = await Room.findById(req.params.id);
@@ -23,7 +21,6 @@ router.get("/:id", async (req, res) => {
   }
 });
 
-// Create room
 router.post("/", async (req, res) => {
   try {
     const { roomID, type,labType, capacity } = req.body;
@@ -35,7 +32,6 @@ router.post("/", async (req, res) => {
   }
 });
 
-// Update room
 router.put("/:id", async (req, res) => {
   try {
     const updatedRoom = await Room.findByIdAndUpdate(req.params.id, req.body, { new: true });
@@ -46,7 +42,6 @@ router.put("/:id", async (req, res) => {
   }
 });
 
-// Delete room
 router.delete("/:id", async (req, res) => {
   try {
     const deleted = await Room.findByIdAndDelete(req.params.id);

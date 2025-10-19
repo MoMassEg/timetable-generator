@@ -11,6 +11,7 @@ const Courses = () => {
     type: "lec",
     labType: "",
     duration: 1,
+    priority: 0,
   });
 
   useEffect(() => {
@@ -52,6 +53,7 @@ const Courses = () => {
       type: course.type,
       labType: course.labType || "",
       duration: course.duration,
+      priority: course.priority || 0,
     });
     setShowModal(true);
   };
@@ -69,7 +71,14 @@ const Courses = () => {
 
   const resetForm = () => {
     setEditingCourse(null);
-    setFormData({ courseID: "", courseName: "", type: "lec", labType: "", duration: 1 });
+    setFormData({ 
+      courseID: "", 
+      courseName: "", 
+      type: "lec", 
+      labType: "", 
+      duration: 1,
+      priority: 0 
+    });
     setShowModal(false);
   };
 
@@ -90,8 +99,9 @@ const Courses = () => {
                 <th>ID</th>
                 <th>Name</th>
                 <th>Type</th>
-                <th>labType</th>
+                <th>Lab Type</th>
                 <th>Duration</th>
+                <th>Priority</th> 
                 <th>Actions</th>
               </tr>
             </thead>
@@ -103,6 +113,7 @@ const Courses = () => {
                   <td>{course.type}</td>
                   <td>{course.labType}</td>
                   <td>{course.duration}</td>
+                  <td>{course.priority || 0}</td> 
                   <td>
                     <button
                       onClick={() => handleEdit(course)}
@@ -183,7 +194,7 @@ const Courses = () => {
               </div>
 
               <div className="form-group">
-                <label className="form-label">lab Type</label>
+                <label className="form-label">Lab Type</label>
                 <input
                   type="text"
                   className="form-input"
@@ -205,6 +216,23 @@ const Courses = () => {
                   }
                   required
                 />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Priority</label>
+                <input
+                  type="number"
+                  className="form-input"
+                  value={formData.priority}
+                  onChange={(e) =>
+                    setFormData({ ...formData, priority: parseInt(e.target.value) || 0 })
+                  }
+                  min="0"
+                  placeholder="0 (lowest priority)"
+                />
+                <small style={{ color: '#666', fontSize: '0.875rem' }}>
+                  Higher numbers = higher priority
+                </small>
               </div>
 
               <div className="modal-footer">

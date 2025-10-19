@@ -5,7 +5,7 @@ const sectionSchema = new mongoose.Schema({
   groupID: { type: String, required: true },
   year: { type: Number, required: true },
   studentCount: { type: Number, default: 0 },
-  assignedCourses: { type: [String], default: [] }, // array of course IDs
+  assignedCourses: { type: [String], default: [] },
 }, { timestamps: true });
 
 module.exports = mongoose.model('Section', sectionSchema);

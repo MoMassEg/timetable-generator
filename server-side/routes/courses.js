@@ -1,11 +1,10 @@
-// routes/courseRoutes.js
 const express = require("express");
 const Course = require("../models/Course.js");
 const router = express.Router();
 
 router.get("/", async (req, res) => {
   try {
-    const courses = await Course.find();
+    const courses = await Course.find().sort({ priority: -1 });
     res.json(courses);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -24,8 +23,15 @@ router.get("/:id", async (req, res) => {
 
 router.post("/", async (req, res) => {
   try {
-    const { courseID, courseName, type,labType, duration } = req.body;
-    const newCourse = new Course({ courseID, courseName, type,labType, duration });
+    const { courseID, courseName, type, labType, duration, priority } = req.body;
+    const newCourse = new Course({ 
+      courseID, 
+      courseName, 
+      type, 
+      labType, 
+      duration, 
+      priority 
+    });
     await newCourse.save();
     res.status(201).json(newCourse);
   } catch (err) {
@@ -35,7 +41,11 @@ router.post("/", async (req, res) => {
 
 router.put("/:id", async (req, res) => {
   try {
-    const updatedCourse = await Course.findByIdAndUpdate(req.params.id, req.body, { new: true });
+    const updatedCourse = await Course.findByIdAndUpdate(
+      req.params.id, 
+      req.body, 
+      { new: true, runValidators: true } 
+    );
     if (!updatedCourse) return res.status(404).json({ message: "Course not found" });
     res.json(updatedCourse);
   } catch (err) {

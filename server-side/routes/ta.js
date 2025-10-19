@@ -2,7 +2,6 @@ const express = require("express");
 const TA = require("../models/TAs");
 const router = express.Router();
 
-// Get all TAs
 router.get("/", async (req, res) => {
   try {
     const tas = await TA.find();
@@ -12,7 +11,6 @@ router.get("/", async (req, res) => {
   }
 });
 
-// Get TA by id
 router.get("/:id", async (req, res) => {
   try {
     const ta = await TA.findById(req.params.id);
@@ -23,7 +21,6 @@ router.get("/:id", async (req, res) => {
   }
 });
 
-// Create TA
 router.post("/", async (req, res) => {
   try {
     const { taID, name, qualifiedCourses } = req.body;
@@ -35,7 +32,6 @@ router.post("/", async (req, res) => {
   }
 });
 
-// Update TA
 router.put("/:id", async (req, res) => {
   try {
     const updatedTA = await TA.findByIdAndUpdate(req.params.id, req.body, { new: true });
@@ -46,7 +42,6 @@ router.put("/:id", async (req, res) => {
   }
 });
 
-// Delete TA
 router.delete("/:id", async (req, res) => {
   try {
     const deleted = await TA.findByIdAndDelete(req.params.id);

@@ -14,7 +14,7 @@ const TimetableView = () => {
   const schedulerAPI = "http://127.0.0.1:8080/api/schedule";
 
   useEffect(() => {
-    fetchAndGenerateSchedule();
+    setLoading(false);
   }, []);
 
   const fetchAndGenerateSchedule = async () => {
@@ -45,7 +45,7 @@ const TimetableView = () => {
     const instructors = new Set();
     sections.forEach(section => {
       section.schedule.forEach(session => {
-        instructors.add(session.instructorID);
+        instructors.add(session.instructorName);
       });
     });
     return Array.from(instructors).sort();
@@ -82,7 +82,7 @@ const TimetableView = () => {
 
     return sections.map(section => {
       const filteredSchedule = section.schedule.filter(session => {
-        const matchInstructor = selectedInstructor === "all" || session.instructorID === selectedInstructor;
+        const matchInstructor = selectedInstructor === "all" || session.instructorName === selectedInstructor;
         const matchRoom = selectedRoom === "all" || session.roomID === selectedRoom;
         return matchInstructor && matchRoom;
       });
@@ -95,7 +95,7 @@ const TimetableView = () => {
   };
 
   const renderTimetable = () => {
-    const days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
+    const days = ["Sunday","Monday", "Tuesday", "Wednesday", "Thursday"];
     const timeSlots = Array.from({ length: 8 }, (_, i) => i);
 
     const filteredSections = getFilteredSections();
@@ -181,7 +181,7 @@ const TimetableView = () => {
                               <div className="session-content">
                                 <div className="course-code">{session.courseID}</div>
                                 <div className="course-name">{session.courseName}</div>
-                                <div className="instructor">{session.instructorID}</div>
+                                <div className="instructor">{session.instructorName}</div>
                                 <div className="room">{session.roomID}</div>
                               </div>
                             </td>

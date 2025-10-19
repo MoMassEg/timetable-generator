@@ -15,7 +15,6 @@ const ta = require('./routes/ta');
 
 const app = express();
 
-// Middleware
 app.use(helmet());
 app.use(cors({
     origin: process.env.CLIENT_URL || 'http://localhost:3000',
@@ -25,7 +24,6 @@ app.use(morgan('combined'));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
-// Database connection
 mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/csit_timetable', {
     useNewUrlParser: true,
     useUnifiedTopology: true,
@@ -33,7 +31,6 @@ mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/csit_time
 .then(() => console.log('MongoDB connected successfully'))
 .catch(err => console.error('MongoDB connection error:', err));
 
-// Routes
 app.use('/api/courses', courseRoutes);
 app.use('/api/instructors', instructorRoutes);
 app.use('/api/rooms', roomRoutes);
