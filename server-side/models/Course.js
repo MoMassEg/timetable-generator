@@ -6,7 +6,8 @@ const courseSchema = new mongoose.Schema({
   type: { type: String, enum: ["lec", "tut", "lab"], required: true },
   labType: { type: String},
   duration: { type: Number, required: true },
-  priority: { type: Number, default: 0 }
+  priority: { type: Number, default: 0 },
+  allYear: { type: Boolean, default: false }
 }, { timestamps: true });
 
 module.exports = mongoose.model('Course', courseSchema);

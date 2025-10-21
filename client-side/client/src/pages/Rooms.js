@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from "react";
 import axios from "axios";
-import { Plus, Edit, Trash2, MapPin } from "lucide-react";
 
 const Rooms = () => {
   const [rooms, setRooms] = useState([]);
@@ -74,11 +73,10 @@ const Rooms = () => {
     <div className="card">
       <div className="card-header">
         <h1 className="card-title">
-          <MapPin className="inline-block mr-2" size={24} />
           Room Management
         </h1>
         <button onClick={() => setShowModal(true)} className="btn btn-primary">
-          <Plus size={16} className="mr-1" /> Add Room
+          Add Room
         </button>
       </div>
 
@@ -108,13 +106,13 @@ const Rooms = () => {
                     className="btn btn-sm btn-secondary"
                     style={{ marginRight: "0.5rem" }}
                   >
-                    <Edit size={14} />
+                    Edit
                   </button>
                   <button
                     onClick={() => handleDelete(room._id)}
                     className="btn btn-sm btn-danger"
                   >
-                    <Trash2 size={14} />
+                    Delete
                   </button>
                 </td>
               </tr>

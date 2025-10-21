@@ -1,5 +1,4 @@
-﻿
-#include "httplib.h"
+﻿#include "httplib.h"
 #include <nlohmann/json.hpp>
 #include <iostream>
 #include <vector>
@@ -20,6 +19,7 @@ struct Course {
     string courseID, courseName, type;
     string labType;
     int duration;
+    bool allYear;
 };
 
 struct Instructor {
@@ -79,6 +79,7 @@ unordered_set<string> roomBusy[SLOTS_MAX];
 
 unordered_map<string, string> sectionToGroup;
 unordered_map<string, vector<string>> groupToSections;
+unordered_map<int, vector<string>> yearToSections;
 
 vector<unordered_set<string>> scheduledCourses;
 unordered_map<string, Course> getCourse;
@@ -110,13 +111,13 @@ int getTotalStudents(vector<int>& sectionIndices) {
 }
 
 string getInstructorName(string instructorID) {
-    for (const auto& inst : instructors) {
+    for (auto inst : instructors) {
         if (inst.instructorID == instructorID) {
             return inst.name;
         }
     }
 
-    for (const auto& ta : tas) {
+    for (auto ta : tas) {
         if (ta.taID == instructorID) {
             return ta.name;
         }
@@ -126,7 +127,7 @@ string getInstructorName(string instructorID) {
 }
 
 bool valid(vector<int>& targetSections, int slot, int duration, string instructorID, string roomID) {
-    if (duration == 2 && slot % 2 != 0) return false;
+    if (duration > 1 && slot % duration != 0) return false;
     if (slot < 0 || slot >= SLOTS_MAX) return false;
     if (slot + duration > SLOTS_MAX) return false;
 
@@ -160,14 +161,14 @@ void place(vector<int>& targetSections, string courseID, string type, int durati
         Timetable[slot][sec].istaken = true;
         Timetable[slot][sec].isCont = false;
 
-        if (duration == 2) {
-            Timetable[slot + 1][sec].courseID = courseID;
-            Timetable[slot + 1][sec].type = type;
-            Timetable[slot + 1][sec].roomID = roomID;
-            Timetable[slot + 1][sec].instructorID = instructorID;
-            Timetable[slot + 1][sec].duration = duration;
-            Timetable[slot + 1][sec].istaken = true;
-            Timetable[slot + 1][sec].isCont = true;
+        for (int i = 1; i < duration; i++) {
+            Timetable[slot + i][sec].courseID = courseID;
+            Timetable[slot + i][sec].type = type;
+            Timetable[slot + i][sec].roomID = roomID;
+            Timetable[slot + i][sec].instructorID = instructorID;
+            Timetable[slot + i][sec].duration = duration;
+            Timetable[slot + i][sec].istaken = true;
+            Timetable[slot + i][sec].isCont = true;
         }
 
         scheduledCourses[sec].insert(courseID);
@@ -201,7 +202,7 @@ bool solve(int sectionIdx) {
 
     vector<string>& coursesToSchedule = sections[sectionIdx].assignedCourses;
     bool allScheduled = true;
-    for (const auto& courseID : coursesToSchedule) {
+    for (auto courseID : coursesToSchedule) {
         if (scheduledCourses[sectionIdx].find(courseID) == scheduledCourses[sectionIdx].end()) {
             allScheduled = false;
             break;
@@ -213,7 +214,7 @@ bool solve(int sectionIdx) {
     }
 
     string courseID = "";
-    for (const auto& cid : coursesToSchedule) {
+    for (auto cid : coursesToSchedule) {
         if (scheduledCourses[sectionIdx].find(cid) == scheduledCourses[sectionIdx].end()) {
             courseID = cid;
             break;
@@ -226,20 +227,70 @@ bool solve(int sectionIdx) {
 
     Course course = getCourse[courseID];
     vector<int> targetSections;
-
+  
     if (course.type == "Lecture") {
         string groupID = sections[sectionIdx].groupID;
+        int currentYear = sections[sectionIdx].year;
 
-        for (const auto& secID : groupToSections[groupID]) {
-            int idx = sectionToIndex[secID];
-            if (scheduledCourses[idx].find(courseID) != scheduledCourses[idx].end()) {
-                scheduledCourses[sectionIdx].insert(courseID);
-                return solve(sectionIdx);
+        vector<string> candidateSections;
+
+        if (course.allYear) {
+            if (yearToSections.find(currentYear) != yearToSections.end()) {
+                candidateSections = yearToSections[currentYear];
+            }
+        }
+        else {
+            if (groupToSections.find(groupID) != groupToSections.end()) {
+                candidateSections = groupToSections[groupID];
             }
         }
 
-        for (const auto& secID : groupToSections[groupID]) {
-            targetSections.push_back(sectionToIndex[secID]);
+        bool currentSectionNeedsCourse = find(all(sections[sectionIdx].assignedCourses), courseID)
+            != sections[sectionIdx].assignedCourses.end();
+
+        if (!currentSectionNeedsCourse) {
+            scheduledCourses[sectionIdx].insert(courseID);
+            return solve(sectionIdx);
+        }
+
+        bool allScheduled = true;
+        for (auto secID : candidateSections) {
+            auto it = sectionToIndex.find(secID);
+            if (it == sectionToIndex.end()) continue;
+
+            int idx = it->second;
+
+            bool sectionNeedsCourse = find(all(sections[idx].assignedCourses), courseID)
+                != sections[idx].assignedCourses.end();
+
+            if (sectionNeedsCourse) {
+                if (scheduledCourses[idx].find(courseID) == scheduledCourses[idx].end()) {
+                    allScheduled = false;
+                    break;
+                }
+            }
+        }
+
+        if (allScheduled) {
+            scheduledCourses[sectionIdx].insert(courseID);
+            return solve(sectionIdx);
+        }
+
+        for (auto secID : candidateSections) {
+            auto it = sectionToIndex.find(secID);
+            if (it == sectionToIndex.end()) continue;
+
+            int idx = it->second;
+
+            if (find(all(sections[idx].assignedCourses), courseID) != sections[idx].assignedCourses.end() &&
+                scheduledCourses[idx].find(courseID) == scheduledCourses[idx].end()) {
+                targetSections.push_back(idx);
+            }
+        }
+
+        if (targetSections.empty()) {
+            scheduledCourses[sectionIdx].insert(courseID);
+            return solve(sectionIdx);
         }
     }
     else {
@@ -250,14 +301,14 @@ bool solve(int sectionIdx) {
 
     vector<string> candidates;
     if (course.type == "Lecture") {
-        for (const auto& inst : instructors) {
+        for (auto inst : instructors) {
             if (isQualified(inst.instructorID, courseID, false)) {
                 candidates.push_back(inst.instructorID);
             }
         }
     }
     else {
-        for (const auto& ta : tas) {
+        for (auto ta : tas) {
             if (isQualified(ta.taID, courseID, true)) {
                 candidates.push_back(ta.taID);
             }
@@ -271,8 +322,8 @@ bool solve(int sectionIdx) {
     bool flag = true;
 
     for (int slot = 0; slot < SLOTS_MAX; slot++) {
-        for (const auto& instructorID : candidates) {
-            for (const auto& room : rooms) {
+        for (auto instructorID : candidates) {
+            for (auto room : rooms) {
                 if (room.type != course.type) continue;
 
                 if (course.type == "Lab" && !course.labType.empty()) {
@@ -316,6 +367,7 @@ void clearData() {
     sectionToIndex.clear();
     sectionToGroup.clear();
     groupToSections.clear();
+    yearToSections.clear();
     scheduledCourses.clear();
     Timetable.clear();
 
@@ -329,7 +381,7 @@ void parseInputData(const json& inputData) {
     clearData();
 
     if (inputData.contains("courses")) {
-        for (const auto& c : inputData["courses"]) {
+        for (auto c : inputData["courses"]) {
             Course course;
             course.courseID = c.value("courseID", "");
             course.courseName = c.value("courseName", "");
@@ -350,6 +402,8 @@ void parseInputData(const json& inputData) {
 
             course.labType = c.value("labType", "");
 
+            course.allYear = c.value("allYear", false);
+
             course.duration = c.value("duration", 1);
             courses.push_back(course);
             getCourse[course.courseID] = course;
@@ -358,7 +412,7 @@ void parseInputData(const json& inputData) {
     }
 
     if (inputData.contains("instructors")) {
-        for (const auto& i : inputData["instructors"]) {
+        for (auto i : inputData["instructors"]) {
             Instructor instructor;
             instructor.instructorID = i.value("instructorID", "");
             instructor.name = i.value("name", "");
@@ -370,7 +424,7 @@ void parseInputData(const json& inputData) {
     }
 
     if (inputData.contains("tas")) {
-        for (const auto& t : inputData["tas"]) {
+        for (auto t : inputData["tas"]) {
             TA ta;
             ta.taID = t.value("taID", "");
             ta.name = t.value("name", "");
@@ -382,7 +436,7 @@ void parseInputData(const json& inputData) {
     }
 
     if (inputData.contains("rooms")) {
-        for (const auto& r : inputData["rooms"]) {
+        for (auto r : inputData["rooms"]) {
             Room room;
             room.roomID = r.value("roomID", "");
 
@@ -409,7 +463,7 @@ void parseInputData(const json& inputData) {
     }
 
     if (inputData.contains("groups")) {
-        for (const auto& g : inputData["groups"]) {
+        for (auto g : inputData["groups"]) {
             Group group;
             group.groupID = g.value("groupID", "");
             group.year = g.value("year", 1);
@@ -418,7 +472,7 @@ void parseInputData(const json& inputData) {
             }
             groups.push_back(group);
 
-            for (const auto& sec : group.sections) {
+            for (auto sec : group.sections) {
                 sectionToGroup[sec] = group.groupID;
                 groupToSections[group.groupID].push_back(sec);
             }
@@ -427,7 +481,7 @@ void parseInputData(const json& inputData) {
 
     if (inputData.contains("sections")) {
         int idx = 0;
-        for (const auto& s : inputData["sections"]) {
+        for (auto s : inputData["sections"]) {
             Section section;
             section.sectionID = s.value("sectionID", "");
             section.groupID = s.value("groupID", "");
@@ -441,12 +495,12 @@ void parseInputData(const json& inputData) {
                 section.assignedCourses = s["courses"].get<vector<string>>();
             }
 
-            for (int i = 0; i < section.assignedCourses.size(); i++)
-                cout << section.assignedCourses[i] << endl;
-
             sections.push_back(section);
 
             sectionToIndex[section.sectionID] = idx;
+
+            yearToSections[section.year].push_back(section.sectionID);
+
             idx++;
         }
     }
@@ -523,13 +577,6 @@ int main() {
         else {
             response["success"] = false;
             response["error"] = "No valid solution found";
-            response["suggestions"] = json::array({
-                "Check if there are enough rooms for all session types",
-                "Verify sufficient qualified instructors/TAs",
-                "Consider increasing time slots (current: " + to_string(SLOTS_MAX) + ")",
-                "Ensure room capacities are sufficient for student counts",
-                "Verify lab types match between courses and rooms (e.g., Computer Lab, Physics Lab)" 
-                });
         }
 
         res.set_content(response.dump(2), "application/json");

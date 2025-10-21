@@ -12,6 +12,7 @@ const Courses = () => {
     labType: "",
     duration: 1,
     priority: 0,
+    allYear: false,
   });
 
   useEffect(() => {
@@ -54,6 +55,7 @@ const Courses = () => {
       labType: course.labType || "",
       duration: course.duration,
       priority: course.priority || 0,
+      allYear: course.allYear || false,
     });
     setShowModal(true);
   };
@@ -77,7 +79,8 @@ const Courses = () => {
       type: "lec", 
       labType: "", 
       duration: 1,
-      priority: 0 
+      priority: 0,
+      allYear: false,
     });
     setShowModal(false);
   };
@@ -101,7 +104,8 @@ const Courses = () => {
                 <th>Type</th>
                 <th>Lab Type</th>
                 <th>Duration</th>
-                <th>Priority</th> 
+                <th>Priority</th>
+                <th>All Year</th>
                 <th>Actions</th>
               </tr>
             </thead>
@@ -113,7 +117,12 @@ const Courses = () => {
                   <td>{course.type}</td>
                   <td>{course.labType}</td>
                   <td>{course.duration}</td>
-                  <td>{course.priority || 0}</td> 
+                  <td>{course.priority || 0}</td>
+                  <td>
+                    <span className={`badge ${course.allYear ? 'badge-success' : 'badge-secondary'}`}>
+                      {course.allYear ? 'Yes' : 'No'}
+                    </span>
+                  </td>
                   <td>
                     <button
                       onClick={() => handleEdit(course)}
@@ -206,7 +215,7 @@ const Courses = () => {
               </div>
 
               <div className="form-group">
-                <label className="form-label">Duration (hours)</label>
+                <label className="form-label">Duration</label>
                 <input
                   type="number"
                   className="form-input"
@@ -230,8 +239,22 @@ const Courses = () => {
                   min="0"
                   placeholder="0 (lowest priority)"
                 />
-                <small style={{ color: '#666', fontSize: '0.875rem' }}>
-                  Higher numbers = higher priority
+              </div>
+
+              <div className="form-group">
+                <label className="form-label" style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={formData.allYear}
+                    onChange={(e) =>
+                      setFormData({ ...formData, allYear: e.target.checked })
+                    }
+                    style={{ marginRight: '0.5rem', cursor: 'pointer' }}
+                  />
+                  All Year Course
+                </label>
+                <small style={{ color: '#666', marginTop: '0.25rem', display: 'block' }}>
+                  Check if this course runs throughout the entire academic year
                 </small>
               </div>
 

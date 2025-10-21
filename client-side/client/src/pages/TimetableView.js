@@ -1,11 +1,9 @@
 import React, { useEffect, useState } from "react";
 import axios from "axios";
-import { Calendar, RefreshCw, Filter } from "lucide-react";
 
 const TimetableView = () => {
   const [loading, setLoading] = useState(true);
   const [sections, setSections] = useState([]);
-  const [slotsMax, setSlotsMax] = useState(0);
   const [error, setError] = useState(null);
   const [selectedInstructor, setSelectedInstructor] = useState("all");
   const [selectedRoom, setSelectedRoom] = useState("all");
@@ -29,7 +27,6 @@ const TimetableView = () => {
     
       if (scheduleResponse.data?.success) {
         setSections(scheduleResponse.data.sections || []);
-        setSlotsMax(scheduleResponse.data.slotsMax || 40);
       } else {
         setError("Schedule generation failed");
       }
@@ -221,10 +218,10 @@ const TimetableView = () => {
       <div className="error-container">
         <div className="error-header">
           <h1>
-            <Calendar size={24} /> Timetable Generation Error
+            Timetable Generation Error
           </h1>
           <button onClick={fetchAndGenerateSchedule} className="btn-refresh">
-            <RefreshCw size={16} /> Retry
+           Retry
           </button>
         </div>
         <div className="error-message">
@@ -239,14 +236,11 @@ const TimetableView = () => {
       <div className="header-card">
         <div>
           <h1>
-            <Calendar size={24} /> Generated Timetable
+           Generated Timetable
           </h1>
-          <p>
-            Slots: {slotsMax} • Sections: {sections.length}
-          </p>
         </div>
         <button onClick={fetchAndGenerateSchedule} className="btn-refresh">
-          <RefreshCw size={16} /> Refresh
+        Generate
         </button>
       </div>
 
@@ -259,7 +253,6 @@ const TimetableView = () => {
         <>
           <div className="filter-controls">
             <div className="filter-icon">
-              <Filter size={20} />
               <span>Filter Timetable:</span>
             </div>
             

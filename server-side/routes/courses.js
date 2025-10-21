@@ -23,14 +23,15 @@ router.get("/:id", async (req, res) => {
 
 router.post("/", async (req, res) => {
   try {
-    const { courseID, courseName, type, labType, duration, priority } = req.body;
+    const { courseID, courseName, type, labType, duration, priority, allYear } = req.body;
     const newCourse = new Course({ 
       courseID, 
       courseName, 
       type, 
       labType, 
       duration, 
-      priority 
+      priority,
+      allYear
     });
     await newCourse.save();
     res.status(201).json(newCourse);

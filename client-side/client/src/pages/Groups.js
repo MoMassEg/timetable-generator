@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from "react";
 import axios from "axios";
 
-const API_URL = "http://localhost:5000/api/groups";
 
 const Groups = () => {
   const [groups, setGroups] = useState([]);
@@ -18,7 +17,7 @@ const Groups = () => {
 
   const fetchGroups = async () => {
     try {
-      const res = await axios.get(API_URL);
+      const res = await axios.get("http://localhost:5000/api/groups");
       setGroups(res.data);
     } catch (err) {
       console.error(err);
@@ -30,9 +29,9 @@ const Groups = () => {
     e.preventDefault();
     try {
       if (editingGroup) {
-        await axios.put(`${API_URL}/${editingGroup._id}`, formData);
+        await axios.put(`http://localhost:5000/api/groups/${editingGroup._id}`, formData);
       } else {
-        await axios.post(API_URL, formData);
+        await axios.post("http://localhost:5000/api/groups", formData);
       }
       resetForm();
       fetchGroups();
@@ -53,7 +52,7 @@ const Groups = () => {
   const handleDelete = async (id) => {
     if (!window.confirm("Delete this group?")) return;
     try {
-      await axios.delete(`${API_URL}/${id}`);
+      await axios.delete(`http://localhost:5000/api/groups/${id}`);
       setGroups(groups.filter((g) => g._id !== id));
     } catch (err) {
       console.error(err);

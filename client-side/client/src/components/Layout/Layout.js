@@ -24,7 +24,6 @@ const Layout = ({ children }) => {
     <div className="layout">
       <aside className="sidebar">
         <div className="nav-brand">
-          <Calendar className="inline-block mr-2" size={24} />
           CSIT Timetable
         </div>
         

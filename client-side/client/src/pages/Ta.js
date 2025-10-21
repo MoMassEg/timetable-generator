@@ -140,7 +140,6 @@ const TAs = () => {
         </div>
       </div>
 
-      {/* Modal */}
       {showModal && (
         <div className="modal-overlay">
           <div className="modal">
