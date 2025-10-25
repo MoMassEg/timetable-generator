@@ -46,8 +46,30 @@ router.post("/", async (req, res) => {
 
 router.put("/:id", async (req, res) => {
   try {
+    const currentSection = await Section.findById(req.params.id);
+    if (!currentSection) return res.status(404).json({ message: "Section not found" });
+
+    const { groupID } = req.body;
+    
+    if (groupID && groupID !== currentSection.groupID) {
+      const oldGroup = await Group.findOne({ groupID: currentSection.groupID });
+      if (oldGroup) {
+        oldGroup.sections = oldGroup.sections.filter(id => id !== currentSection.sectionID);
+        await oldGroup.save();
+      }
+
+      const newGroup = await Group.findOne({ groupID });
+      if (!newGroup) {
+        return res.status(404).json({ error: "New group not found" });
+      }
+      
+      if (!newGroup.sections.includes(currentSection.sectionID)) {
+        newGroup.sections.push(currentSection.sectionID);
+        await newGroup.save();
+      }
+    }
+
     const updated = await Section.findByIdAndUpdate(req.params.id, req.body, { new: true });
-    if (!updated) return res.status(404).json({ message: "Section not found" });
     res.json(updated);
   } catch (err) {
     res.status(400).json({ error: err.message });

@@ -253,9 +253,6 @@ const Courses = () => {
                   />
                   All Year Course
                 </label>
-                <small style={{ color: '#666', marginTop: '0.25rem', display: 'block' }}>
-                  Check if this course runs throughout the entire academic year
-                </small>
               </div>
 
               <div className="modal-footer">

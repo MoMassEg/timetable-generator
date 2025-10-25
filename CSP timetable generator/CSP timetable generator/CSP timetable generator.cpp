@@ -126,11 +126,15 @@ string getInstructorName(string instructorID) {
     return "";
 }
 
-bool valid(vector<int>& targetSections, int slot, int duration, string instructorID, string roomID) {
+bool valid(vector<int>& targetSections, int slot, int duration, string instructorID, string roomID, string courseID) {
+    //cout << "duration" << endl;
     if (duration > 1 && slot % duration != 0) return false;
+    //cout << "slot" << endl;
     if (slot < 0 || slot >= SLOTS_MAX) return false;
+    //cout << "slot+duration" << endl;
     if (slot + duration > SLOTS_MAX) return false;
 
+    //cout << "TargetSections" << endl;
     for (int sec : targetSections) {
         if (sec < 0 || sec >= SECTIONS_MAX) return false;
 
@@ -139,14 +143,18 @@ bool valid(vector<int>& targetSections, int slot, int duration, string instructo
         }
     }
 
+    //cout << "instructor" << endl;
     for (int s = slot; s < slot + duration; s++) {
         if (instructorBusy[s].find(instructorID) != instructorBusy[s].end()) return false;
     }
 
-    for (int s = slot; s < slot + duration; s++) {
-        if (roomBusy[s].find(roomID) != roomBusy[s].end()) return false;
-    }
+    //cout << "room" << endl;
+    if (courseID != "GRAD1" && courseID != "GRAD2")
+        for (int s = slot; s < slot + duration; s++) {
+            if (roomBusy[s].find(roomID) != roomBusy[s].end()) return false;
+        }
 
+    //cout << "true" << endl;
     return true;
 }
 
@@ -176,7 +184,8 @@ void place(vector<int>& targetSections, string courseID, string type, int durati
 
     for (int s = slot; s < slot + duration; s++) {
         instructorBusy[s].insert(instructorID);
-        roomBusy[s].insert(roomID);
+        if (courseID != "GRAD1" && courseID != "GRAD2")
+            roomBusy[s].insert(roomID);
     }
 }
 
@@ -191,7 +200,8 @@ void remove(vector<int>& targetSections, string courseID, string instructorID, s
 
     for (int s = slot; s < slot + duration; s++) {
         instructorBusy[s].erase(instructorID);
-        roomBusy[s].erase(roomID);
+        if (courseID != "GRAD1" && courseID != "GRAD2")
+            roomBusy[s].erase(roomID);
     }
 }
 
@@ -200,6 +210,7 @@ bool solve(int sectionIdx) {
         return true;
     }
 
+    //cout << "startsolve" << endl;
     vector<string>& coursesToSchedule = sections[sectionIdx].assignedCourses;
     bool allScheduled = true;
     for (auto courseID : coursesToSchedule) {
@@ -213,6 +224,8 @@ bool solve(int sectionIdx) {
         return solve(sectionIdx + 1);
     }
 
+    
+
     string courseID = "";
     for (auto cid : coursesToSchedule) {
         if (scheduledCourses[sectionIdx].find(cid) == scheduledCourses[sectionIdx].end()) {
@@ -220,41 +233,48 @@ bool solve(int sectionIdx) {
             break;
         }
     }
-
     if (getCourse.find(courseID) == getCourse.end()) {
+        //cout <<"didn't find " << courseID << endl;
         return false;
     }
 
     Course course = getCourse[courseID];
     vector<int> targetSections;
-  
-    if (course.type == "Lecture") {
-        string groupID = sections[sectionIdx].groupID;
-        int currentYear = sections[sectionIdx].year;
+    //cout << course.courseName << endl;
+   
 
-        vector<string> candidateSections;
+    vector<string> candidateSections;
+    string groupID = sections[sectionIdx].groupID;
+    int currentYear = sections[sectionIdx].year;
 
-        if (course.allYear) {
-            if (yearToSections.find(currentYear) != yearToSections.end()) {
-                candidateSections = yearToSections[currentYear];
-            }
+    if (course.allYear) {
+        if (yearToSections.find(currentYear) != yearToSections.end()) {
+            candidateSections = yearToSections[currentYear];
         }
-        else {
-            if (groupToSections.find(groupID) != groupToSections.end()) {
-                candidateSections = groupToSections[groupID];
-            }
+    }
+    else if (course.type == "Lecture") {
+        if (groupToSections.find(groupID) != groupToSections.end()) {
+            candidateSections = groupToSections[groupID];
         }
+    }
+    else {
+        targetSections.push_back(sectionIdx);
+    }
+
+    
+
+    if (course.allYear || course.type == "Lecture") {
 
         bool currentSectionNeedsCourse = find(all(sections[sectionIdx].assignedCourses), courseID)
             != sections[sectionIdx].assignedCourses.end();
-
+        
         if (!currentSectionNeedsCourse) {
             scheduledCourses[sectionIdx].insert(courseID);
             return solve(sectionIdx);
         }
 
         bool allScheduled = true;
-        for (auto secID : candidateSections) {
+        for (auto& secID : candidateSections) {
             auto it = sectionToIndex.find(secID);
             if (it == sectionToIndex.end()) continue;
 
@@ -270,13 +290,14 @@ bool solve(int sectionIdx) {
                 }
             }
         }
-
+       
+      
         if (allScheduled) {
             scheduledCourses[sectionIdx].insert(courseID);
             return solve(sectionIdx);
         }
 
-        for (auto secID : candidateSections) {
+        for (auto& secID : candidateSections) {
             auto it = sectionToIndex.find(secID);
             if (it == sectionToIndex.end()) continue;
 
@@ -293,65 +314,83 @@ bool solve(int sectionIdx) {
             return solve(sectionIdx);
         }
     }
-    else {
-        targetSections.push_back(sectionIdx);
-    }
-
+   
     int totalStudents = getTotalStudents(targetSections);
-
+    //cout << "target" << endl;
     vector<string> candidates;
-    if (course.type == "Lecture") {
-        for (auto inst : instructors) {
-            if (isQualified(inst.instructorID, courseID, false)) {
-                candidates.push_back(inst.instructorID);
-            }
+    for (auto inst : instructors) {
+        if (isQualified(inst.instructorID, courseID, false)) {
+            candidates.push_back(inst.instructorID);
         }
     }
-    else {
-        for (auto ta : tas) {
-            if (isQualified(ta.taID, courseID, true)) {
-                candidates.push_back(ta.taID);
-            }
+    
+    for (auto ta : tas) {
+        if (isQualified(ta.taID, courseID, true)) {
+            candidates.push_back(ta.taID);
         }
     }
+    
 
     if (candidates.empty()) {
+        //cout << course.courseName << " NO TA" << endl;
         return false;
     }
+    //cout << "cand" << endl;
 
     bool flag = true;
+    
 
     for (int slot = 0; slot < SLOTS_MAX; slot++) {
         for (auto instructorID : candidates) {
-            for (auto room : rooms) {
-                if (room.type != course.type) continue;
-
-                if (course.type == "Lab" && !course.labType.empty()) {
-                    if (room.labType != course.labType) {
-                        continue;
-                    }
-                }
-
-                if (room.capacity < totalStudents) continue;
-
-                if (!valid(targetSections, slot, course.duration, instructorID, room.roomID)) {
+            if (courseID == "GRAD1" || courseID == "GRAD2") {
+                //cout << "GRAD1" << " " << targetSections[0]<<" "<<slot << endl;
+                if (!valid(targetSections, slot, course.duration, instructorID, "", courseID)) {
                     continue;
                 }
-
                 flag = false;
-                place(targetSections, courseID, course.type, course.duration, instructorID, room.roomID, slot);
+                place(targetSections, courseID, course.type, course.duration, instructorID, "", slot);
 
                 if (solve(sectionIdx)) {
                     return true;
                 }
 
-                remove(targetSections, courseID, instructorID, room.roomID, slot, course.duration);
+                remove(targetSections, courseID, instructorID, "", slot, course.duration);
+            }
+            else {
+                for (auto room : rooms) {
+                    if (room.type != course.type) continue;
+
+                    if (course.type == "Lab" && !course.labType.empty()) {
+                        if (room.labType != course.labType) {
+                            continue;
+                        }
+                    }
+
+                    if (!course.allYear && room.capacity < totalStudents) continue;
+
+                    if (!valid(targetSections, slot, course.duration, instructorID, room.roomID, courseID)) {
+                        continue;
+                    }
+
+                    flag = false;
+                    place(targetSections, courseID, course.type, course.duration, instructorID, room.roomID, slot);
+
+                    if (solve(sectionIdx)) {
+                        return true;
+                    }
+
+                    remove(targetSections, courseID, instructorID, room.roomID, slot, course.duration);
+                }
             }
         }
     }
+    
 
-    if (flag)
+    if (flag) {
+        //cout << course.courseName << " NO ROOM" << endl;
         return false;
+    }
+    //cout << "Room" << endl;
 
     return false;
 }
