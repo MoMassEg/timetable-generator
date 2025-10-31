@@ -1,17 +1,20 @@
+// routes/groupRoutes.js
 const express = require("express");
 const Group = require("../models/Group.js");
 const router = express.Router();
 
-router.get("/", async (req, res) => {
+// Get all groups for a specific timetable
+router.get("/:timetableID", async (req, res) => {
   try {
-    const groups = await Group.find();
+    const groups = await Group.find({ timetableID: req.params.timetableID });
     res.json(groups);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-router.get("/:id", async (req, res) => {
+// Get group by ID
+router.get("/group/:id", async (req, res) => {
   try {
     const group = await Group.findById(req.params.id);
     if (!group) return res.status(404).json({ message: "Group not found" });
@@ -21,10 +24,16 @@ router.get("/:id", async (req, res) => {
   }
 });
 
+// Create group
 router.post("/", async (req, res) => {
   try {
-    const { groupID, yearID } = req.body;
-    const newGroup = new Group({ groupID, yearID });
+    const { groupID, yearID, timetableID } = req.body;
+    
+    if (!timetableID) {
+      return res.status(400).json({ error: "timetableID is required" });
+    }
+
+    const newGroup = new Group({ groupID, yearID, timetableID });
     await newGroup.save();
     res.status(201).json(newGroup);
   } catch (err) {
@@ -32,6 +41,7 @@ router.post("/", async (req, res) => {
   }
 });
 
+// Update group
 router.put("/:id", async (req, res) => {
   try {
     const updatedGroup = await Group.findByIdAndUpdate(req.params.id, req.body, { new: true });
@@ -42,6 +52,7 @@ router.put("/:id", async (req, res) => {
   }
 });
 
+// Delete group
 router.delete("/:id", async (req, res) => {
   try {
     const deleted = await Group.findByIdAndDelete(req.params.id);

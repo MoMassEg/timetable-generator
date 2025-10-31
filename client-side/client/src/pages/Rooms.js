@@ -1,3 +1,4 @@
+// pages/Rooms.js
 import React, { useState, useEffect } from "react";
 import axios from "axios";
 
@@ -6,6 +7,9 @@ const Rooms = () => {
   const [showModal, setShowModal] = useState(false);
   const [editingRoom, setEditingRoom] = useState(null);
   const [searchTerm, setSearchTerm] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [timetableID, setTimetableID] = useState("");
   const [formData, setFormData] = useState({
     roomID: "",
     type: "lec",
@@ -15,20 +19,49 @@ const Rooms = () => {
 
   const api = axios.create({ baseURL: "http://localhost:5000/api" });
 
+  // Check for timetable changes
+  useEffect(() => {
+    const handleStorageChange = () => {
+      const newTimetableID = localStorage.getItem("selectedTimetableID");
+      setTimetableID(newTimetableID || "");
+    };
+
+    handleStorageChange();
+    window.addEventListener("storage", handleStorageChange);
+
+    return () => {
+      window.removeEventListener("storage", handleStorageChange);
+    };
+  }, []);
+
+  // Fetch rooms when timetableID changes
+  useEffect(() => {
+    if (timetableID) {
+      fetchRooms();
+      setSearchTerm("");
+      setShowModal(false);
+      resetForm();
+    } else {
+      setRooms([]);
+      setError("Please select a timetable first");
+    }
+  }, [timetableID]);
+
   const fetchRooms = async () => {
     try {
-      const res = await api.get("/rooms");
+      setLoading(true);
+      setError("");
+      const res = await api.get(`/rooms/${timetableID}`);
       setRooms(res.data);
     } catch (err) {
       console.error("Error fetching rooms:", err);
+      setError("Failed to load rooms");
+    } finally {
+      setLoading(false);
     }
   };
 
-  useEffect(() => {
-    fetchRooms();
-  }, []);
-
-  const filteredRooms = rooms.filter(room => {
+  const filteredRooms = rooms.filter((room) => {
     if (!searchTerm) return true;
     const searchLower = searchTerm.toLowerCase();
     return (
@@ -42,15 +75,27 @@ const Rooms = () => {
   const handleSubmit = async (e) => {
     e.preventDefault();
     try {
+      setLoading(true);
+      setError("");
+
       if (editingRoom) {
-        await api.put(`/rooms/${editingRoom._id}`, formData);
+        await api.put(`/rooms/${editingRoom._id}`, {
+          ...formData,
+          timetableID,
+        });
       } else {
-        await api.post("/rooms", formData);
+        await api.post("/rooms", {
+          ...formData,
+          timetableID,
+        });
       }
       fetchRooms();
       resetForm();
     } catch (err) {
       console.error("Error saving room:", err);
+      setError(err.response?.data?.error || "Failed to save room");
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -68,10 +113,14 @@ const Rooms = () => {
   const handleDelete = async (id) => {
     if (!window.confirm("Are you sure you want to delete this room?")) return;
     try {
+      setLoading(true);
       await api.delete(`/rooms/${id}`);
       fetchRooms();
     } catch (err) {
       console.error("Error deleting room:", err);
+      setError("Failed to delete room");
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -81,14 +130,43 @@ const Rooms = () => {
     setFormData({ roomID: "", type: "lec", labType: "", capacity: 1 });
   };
 
+  if (!timetableID) {
+    return (
+      <div className="card">
+        <div className="empty-state">
+          <h3>No Timetable Selected</h3>
+          <p>Please select a timetable from the sidebar to manage rooms</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="card">
       <div className="card-header">
         <h1 className="card-title">Room Management</h1>
-        <button onClick={() => setShowModal(true)} className="btn btn-primary">
+        <button 
+          onClick={() => setShowModal(true)} 
+          className="btn btn-primary"
+          disabled={loading}
+        >
           Add Room
         </button>
       </div>
+
+      {error && (
+        <div
+          style={{
+            padding: "1rem",
+            backgroundColor: "#fee",
+            color: "#c00",
+            borderRadius: "4px",
+            margin: "1rem",
+          }}
+        >
+          {error}
+        </div>
+      )}
 
       <div style={{ padding: "1rem" }}>
         <input
@@ -98,6 +176,7 @@ const Rooms = () => {
           value={searchTerm}
           onChange={(e) => setSearchTerm(e.target.value)}
           style={{ marginBottom: "1rem" }}
+          disabled={loading}
         />
       </div>
 
@@ -119,19 +198,21 @@ const Rooms = () => {
                 <td>{index + 1}</td>
                 <td>{room.roomID}</td>
                 <td>{room.type}</td>
-                <td>{room.labType}</td>
+                <td>{room.labType || "-"}</td>
                 <td>{room.capacity}</td>
                 <td>
                   <button
                     onClick={() => handleEdit(room)}
                     className="btn btn-sm btn-secondary"
                     style={{ marginRight: "0.5rem" }}
+                    disabled={loading}
                   >
                     Edit
                   </button>
                   <button
                     onClick={() => handleDelete(room._id)}
                     className="btn btn-sm btn-danger"
+                    disabled={loading}
                   >
                     Delete
                   </button>
@@ -150,8 +231,8 @@ const Rooms = () => {
       </div>
 
       {showModal && (
-        <div className="modal-overlay">
-          <div className="modal">
+        <div className="modal-overlay" onClick={resetForm}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h2 className="modal-title">{editingRoom ? "Edit Room" : "Add New Room"}</h2>
               <button onClick={resetForm} className="modal-close">×</button>
@@ -168,6 +249,7 @@ const Rooms = () => {
                     setFormData({ ...formData, roomID: e.target.value })
                   }
                   required
+                  disabled={!!editingRoom || loading}
                 />
               </div>
 
@@ -179,6 +261,7 @@ const Rooms = () => {
                   onChange={(e) =>
                     setFormData({ ...formData, type: e.target.value })
                   }
+                  disabled={loading}
                 >
                   <option value="lec">Lecture</option>
                   <option value="lab">Lab</option>
@@ -195,6 +278,7 @@ const Rooms = () => {
                   onChange={(e) =>
                     setFormData({ ...formData, labType: e.target.value })
                   }
+                  disabled={loading}
                 />
               </div>
 
@@ -209,12 +293,26 @@ const Rooms = () => {
                   }
                   min="1"
                   required
+                  disabled={loading}
                 />
               </div>
 
               <div className="modal-footer">
-                <button type="button" onClick={resetForm} className="btn btn-secondary">Cancel</button>
-                <button type="submit" className="btn btn-primary">{editingRoom ? "Update" : "Create"}</button>
+                <button 
+                  type="button" 
+                  onClick={resetForm} 
+                  className="btn btn-secondary"
+                  disabled={loading}
+                >
+                  Cancel
+                </button>
+                <button 
+                  type="submit" 
+                  className="btn btn-primary"
+                  disabled={loading}
+                >
+                  {loading ? "Processing..." : (editingRoom ? "Update" : "Create")}
+                </button>
               </div>
             </form>
           </div>

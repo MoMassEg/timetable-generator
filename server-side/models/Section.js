@@ -1,3 +1,4 @@
+// models/Section.js
 const mongoose = require('mongoose');
 
 const sectionSchema = new mongoose.Schema({
@@ -6,6 +7,7 @@ const sectionSchema = new mongoose.Schema({
   year: { type: Number, required: true },
   studentCount: { type: Number, default: 0 },
   assignedCourses: { type: [String], default: [] },
+  timetableID: { type: String, required: true }
 }, { timestamps: true });
 
 module.exports = mongoose.model('Section', sectionSchema);

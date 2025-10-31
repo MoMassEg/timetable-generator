@@ -1,19 +1,22 @@
+// routes/sectionRoutes.js
 const express = require("express");
 const Section = require("../models/Section.js");
 const Group = require("../models/Group");
 
 const router = express.Router();
 
-router.get("/", async (req, res) => {
+// Get all sections for a specific timetable
+router.get("/:timetableID", async (req, res) => {
   try {
-    const sections = await Section.find();
+    const sections = await Section.find({ timetableID: req.params.timetableID });
     res.json(sections);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-router.get("/:id", async (req, res) => {
+// Get section by ID
+router.get("/section/:id", async (req, res) => {
   try {
     const section = await Section.findById(req.params.id);
     if (!section) return res.status(404).json({ message: "Section not found" });
@@ -23,12 +26,26 @@ router.get("/:id", async (req, res) => {
   }
 });
 
+// Create section
 router.post("/", async (req, res) => {
   try {
-    const { sectionID, groupID, year, studentCount, assignedCourses } = req.body;
-    const newSection = new Section({ sectionID, groupID, year, studentCount, assignedCourses });
+    const { sectionID, groupID, year, studentCount, assignedCourses, timetableID } = req.body;
+    
+    if (!timetableID) {
+      return res.status(400).json({ error: "timetableID is required" });
+    }
+
+    const newSection = new Section({ 
+      sectionID, 
+      groupID, 
+      year, 
+      studentCount, 
+      assignedCourses,
+      timetableID 
+    });
     await newSection.save();
-    const group = await Group.findOne({ groupID });
+    
+    const group = await Group.findOne({ groupID, timetableID });
     if (!group) {
       await Section.deleteOne({ sectionID });
       return res.status(404).json({ error: "Group not found, section creation reverted." });
@@ -38,18 +55,20 @@ router.post("/", async (req, res) => {
       group.sections.push(sectionID);
       await group.save();
     }
+    
     res.status(201).json(newSection);
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
 });
 
+// Update section
 router.put("/:id", async (req, res) => {
   try {
     const currentSection = await Section.findById(req.params.id);
     if (!currentSection) return res.status(404).json({ message: "Section not found" });
 
-    const { groupID } = req.body;
+    const { groupID, timetableID } = req.body;
     
     if (groupID && groupID !== currentSection.groupID) {
       const oldGroup = await Group.findOne({ groupID: currentSection.groupID });
@@ -58,7 +77,7 @@ router.put("/:id", async (req, res) => {
         await oldGroup.save();
       }
 
-      const newGroup = await Group.findOne({ groupID });
+      const newGroup = await Group.findOne({ groupID, timetableID: currentSection.timetableID });
       if (!newGroup) {
         return res.status(404).json({ error: "New group not found" });
       }
@@ -76,6 +95,7 @@ router.put("/:id", async (req, res) => {
   }
 });
 
+// Delete section
 router.delete("/:id", async (req, res) => {
   try {
     const deleted = await Section.findByIdAndDelete(req.params.id);

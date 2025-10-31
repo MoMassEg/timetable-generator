@@ -1,17 +1,20 @@
+// routes/courseRoutes.js
 const express = require("express");
 const Course = require("../models/Course.js");
 const router = express.Router();
 
-router.get("/", async (req, res) => {
+// Get all courses for a specific timetable
+router.get("/:timetableID", async (req, res) => {
   try {
-    const courses = await Course.find().sort({ priority: -1 });
+    const courses = await Course.find({ timetableID: req.params.timetableID }).sort({ priority: -1 });
     res.json(courses);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-router.get("/:id", async (req, res) => {
+// Get course by ID
+router.get("/course/:id", async (req, res) => {
   try {
     const course = await Course.findById(req.params.id);
     if (!course) return res.status(404).json({ message: "Course not found" });
@@ -21,9 +24,15 @@ router.get("/:id", async (req, res) => {
   }
 });
 
+// Create course
 router.post("/", async (req, res) => {
   try {
-    const { courseID, courseName, type, labType, duration, priority, allYear } = req.body;
+    const { courseID, courseName, type, labType, duration, priority, allYear, timetableID } = req.body;
+    
+    if (!timetableID) {
+      return res.status(400).json({ error: "timetableID is required" });
+    }
+
     const newCourse = new Course({ 
       courseID, 
       courseName, 
@@ -31,7 +40,8 @@ router.post("/", async (req, res) => {
       labType, 
       duration, 
       priority,
-      allYear
+      allYear,
+      timetableID
     });
     await newCourse.save();
     res.status(201).json(newCourse);
@@ -40,6 +50,7 @@ router.post("/", async (req, res) => {
   }
 });
 
+// Update course
 router.put("/:id", async (req, res) => {
   try {
     const updatedCourse = await Course.findByIdAndUpdate(
@@ -54,6 +65,7 @@ router.put("/:id", async (req, res) => {
   }
 });
 
+// Delete course
 router.delete("/:id", async (req, res) => {
   try {
     const deleted = await Course.findByIdAndDelete(req.params.id);

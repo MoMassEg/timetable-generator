@@ -12,6 +12,7 @@ const sectionRoutes = require('./routes/sections');
 const groupRoutes = require('./routes/groups');
 const dataRoutes = require('./routes/data');
 const ta = require('./routes/ta');
+const Timetable = require('./routes/timetable');
 
 const app = express();
 
@@ -38,6 +39,7 @@ app.use('/api/sections', sectionRoutes);
 app.use('/api/groups', groupRoutes);
 app.use('/api/data', dataRoutes);
 app.use('/api/tas', ta);
+app.use('/api/timetables', Timetable);
 
 
 

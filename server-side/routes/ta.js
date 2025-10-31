@@ -1,17 +1,20 @@
+// routes/taRoutes.js
 const express = require("express");
 const TA = require("../models/TAs");
 const router = express.Router();
 
-router.get("/", async (req, res) => {
+// Get all TAs for a specific timetable
+router.get("/:timetableID", async (req, res) => {
   try {
-    const tas = await TA.find();
+    const tas = await TA.find({ timetableID: req.params.timetableID });
     res.json(tas);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-router.get("/:id", async (req, res) => {
+// Get TA by ID
+router.get("/ta/:id", async (req, res) => {
   try {
     const ta = await TA.findById(req.params.id);
     if (!ta) return res.status(404).json({ message: "TA not found" });
@@ -21,10 +24,16 @@ router.get("/:id", async (req, res) => {
   }
 });
 
+// Create TA
 router.post("/", async (req, res) => {
   try {
-    const { taID, name, qualifiedCourses } = req.body;
-    const newTA = new TA({ taID, name, qualifiedCourses });
+    const { taID, name, qualifiedCourses, timetableID } = req.body;
+    
+    if (!timetableID) {
+      return res.status(400).json({ error: "timetableID is required" });
+    }
+
+    const newTA = new TA({ taID, name, qualifiedCourses, timetableID });
     await newTA.save();
     res.status(201).json(newTA);
   } catch (err) {
@@ -32,6 +41,7 @@ router.post("/", async (req, res) => {
   }
 });
 
+// Update TA
 router.put("/:id", async (req, res) => {
   try {
     const updatedTA = await TA.findByIdAndUpdate(req.params.id, req.body, { new: true });
@@ -42,6 +52,7 @@ router.put("/:id", async (req, res) => {
   }
 });
 
+// Delete TA
 router.delete("/:id", async (req, res) => {
   try {
     const deleted = await TA.findByIdAndDelete(req.params.id);

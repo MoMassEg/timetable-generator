@@ -1,3 +1,4 @@
+// routes/dataRoutes.js
 const express = require("express");
 const Course = require("../models/Course");
 const Instructor = require("../models/Instructor");
@@ -7,14 +8,17 @@ const Section = require("../models/Section");
 const TA = require("../models/TAs");
 const router = express.Router();
 
-router.get("/", async (req, res) => {
+// Get all data for a specific timetable
+router.get("/:timetableID", async (req, res) => {
   try {
-    const courses = await Course.find().sort({ priority: -1 });
-    const instructors = await Instructor.find();
-    const tas = await TA.find();
-    const rooms = await Room.find();
-    const groups = await Group.find();
-    const sections = await Section.find();
+    const { timetableID } = req.params;
+
+    const courses = await Course.find({ timetableID }).sort({ priority: -1 });
+    const instructors = await Instructor.find({ timetableID });
+    const tas = await TA.find({ timetableID });
+    const rooms = await Room.find({ timetableID });
+    const groups = await Group.find({ timetableID });
+    const sections = await Section.find({ timetableID });
 
     const coursePriorityMap = {};
     courses.forEach(course => {

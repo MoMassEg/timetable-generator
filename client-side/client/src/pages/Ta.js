@@ -1,3 +1,4 @@
+// pages/TAs.js
 import React, { useState, useEffect } from "react";
 import axios from "axios";
 
@@ -9,30 +10,64 @@ const TAs = () => {
   const [editingTA, setEditingTA] = useState(null);
   const [courseSearchTerm, setCourseSearchTerm] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [timetableID, setTimetableID] = useState("");
   const [formData, setFormData] = useState({
     taID: "",
     name: "",
     qualifiedCourses: [],
   });
 
+  // Check for timetable changes
   useEffect(() => {
-    fetchTAs();
-    fetchCourses();
-    fetchInstructors();
+    const handleStorageChange = () => {
+      const newTimetableID = localStorage.getItem("selectedTimetableID");
+      setTimetableID(newTimetableID || "");
+    };
+
+    handleStorageChange();
+    window.addEventListener("storage", handleStorageChange);
+
+    return () => {
+      window.removeEventListener("storage", handleStorageChange);
+    };
   }, []);
+
+  // Fetch data when timetableID changes
+  useEffect(() => {
+    if (timetableID) {
+      fetchTAs();
+      fetchCourses();
+      fetchInstructors();
+      setSearchTerm("");
+      setShowModal(false);
+      resetForm();
+    } else {
+      setTAs([]);
+      setCourses([]);
+      setInstructors([]);
+      setError("Please select a timetable first");
+    }
+  }, [timetableID]);
 
   const fetchTAs = async () => {
     try {
-      const res = await axios.get("http://localhost:5000/api/tas");
+      setLoading(true);
+      setError("");
+      const res = await axios.get(`http://localhost:5000/api/tas/${timetableID}`);
       setTAs(res.data);
     } catch (err) {
       console.error("Error fetching TAs:", err);
+      setError("Failed to load TAs");
+    } finally {
+      setLoading(false);
     }
   };
 
   const fetchCourses = async () => {
     try {
-      const res = await axios.get("http://localhost:5000/api/courses");
+      const res = await axios.get(`http://localhost:5000/api/courses/${timetableID}`);
       setCourses(res.data);
     } catch (err) {
       console.error("Error fetching courses:", err);
@@ -41,7 +76,7 @@ const TAs = () => {
 
   const fetchInstructors = async () => {
     try {
-      const res = await axios.get("http://localhost:5000/api/instructors");
+      const res = await axios.get(`http://localhost:5000/api/instructors/${timetableID}`);
       setInstructors(res.data);
     } catch (err) {
       console.error("Error fetching instructors:", err);
@@ -93,15 +128,27 @@ const TAs = () => {
   const handleSubmit = async (e) => {
     e.preventDefault();
     try {
+      setLoading(true);
+      setError("");
+
       if (editingTA) {
-        await axios.put(`http://localhost:5000/api/tas/${editingTA._id}`, formData);
+        await axios.put(`http://localhost:5000/api/tas/${editingTA._id}`, {
+          ...formData,
+          timetableID,
+        });
       } else {
-        await axios.post("http://localhost:5000/api/tas", formData);
+        await axios.post("http://localhost:5000/api/tas", {
+          ...formData,
+          timetableID,
+        });
       }
       fetchTAs();
       resetForm();
     } catch (err) {
       console.error("Error saving TA:", err);
+      setError(err.response?.data?.error || "Failed to save TA");
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -118,10 +165,14 @@ const TAs = () => {
   const handleDelete = async (id) => {
     if (!window.confirm("Are you sure you want to delete this TA?")) return;
     try {
+      setLoading(true);
       await axios.delete(`http://localhost:5000/api/tas/${id}`);
       fetchTAs();
     } catch (err) {
       console.error("Error deleting TA:", err);
+      setError("Failed to delete TA");
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -141,15 +192,44 @@ const TAs = () => {
     setCourseSearchTerm("");
   };
 
+  if (!timetableID) {
+    return (
+      <div className="card">
+        <div className="empty-state">
+          <h3>No Timetable Selected</h3>
+          <p>Please select a timetable from the sidebar to manage TAs</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div>
       <div className="card">
         <div className="card-header">
           <h1 className="card-title">TA Management</h1>
-          <button onClick={() => setShowModal(true)} className="btn btn-primary">
+          <button 
+            onClick={() => setShowModal(true)} 
+            className="btn btn-primary"
+            disabled={loading}
+          >
             Add TA
           </button>
         </div>
+
+        {error && (
+          <div
+            style={{
+              padding: "1rem",
+              backgroundColor: "#fee",
+              color: "#c00",
+              borderRadius: "4px",
+              margin: "1rem",
+            }}
+          >
+            {error}
+          </div>
+        )}
 
         <div style={{ padding: "1rem" }}>
           <input
@@ -159,6 +239,7 @@ const TAs = () => {
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             style={{ marginBottom: "1rem" }}
+            disabled={loading}
           />
         </div>
 
@@ -183,12 +264,14 @@ const TAs = () => {
                       onClick={() => handleEdit(ta)}
                       className="btn btn-sm btn-secondary"
                       style={{ marginRight: "0.5rem" }}
+                      disabled={loading}
                     >
                       Edit
                     </button>
                     <button
                       onClick={() => handleDelete(ta._id)}
                       className="btn btn-sm btn-danger"
+                      disabled={loading}
                     >
                       Delete
                     </button>
@@ -208,8 +291,8 @@ const TAs = () => {
       </div>
 
       {showModal && (
-        <div className="modal-overlay">
-          <div className="modal">
+        <div className="modal-overlay" onClick={resetForm}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h2 className="modal-title">
                 {editingTA ? "Edit TA" : "Add New TA"}
@@ -228,6 +311,7 @@ const TAs = () => {
                     setFormData({ ...formData, taID: e.target.value })
                   }
                   required
+                  disabled={!!editingTA || loading}
                 />
               </div>
 
@@ -241,6 +325,7 @@ const TAs = () => {
                     setFormData({ ...formData, name: e.target.value })
                   }
                   required
+                  disabled={loading}
                 />
               </div>
 
@@ -253,6 +338,7 @@ const TAs = () => {
                   value={courseSearchTerm}
                   onChange={(e) => setCourseSearchTerm(e.target.value)}
                   style={{ marginBottom: "0.5rem" }}
+                  disabled={loading}
                 />
                 <div style={{ 
                   maxHeight: "200px", 
@@ -280,6 +366,7 @@ const TAs = () => {
                           checked={formData.qualifiedCourses.includes(course.courseID)}
                           onChange={() => handleCourseToggle(course.courseID)}
                           style={{ marginRight: "0.5rem" }}
+                          disabled={loading}
                         />
                         <span style={{ flex: 1 }}>
                           {course.courseID} - {course.courseName} ({course.type})
@@ -298,9 +385,20 @@ const TAs = () => {
               </div>
 
               <div className="modal-footer">
-                <button type="button" onClick={resetForm} className="btn btn-secondary">Cancel</button>
-                <button type="submit" className="btn btn-primary">
-                  {editingTA ? "Update" : "Create"}
+                <button 
+                  type="button" 
+                  onClick={resetForm} 
+                  className="btn btn-secondary"
+                  disabled={loading}
+                >
+                  Cancel
+                </button>
+                <button 
+                  type="submit" 
+                  className="btn btn-primary"
+                  disabled={loading}
+                >
+                  {loading ? "Processing..." : (editingTA ? "Update" : "Create")}
                 </button>
               </div>
             </form>
