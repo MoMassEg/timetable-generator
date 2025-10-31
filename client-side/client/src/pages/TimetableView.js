@@ -12,7 +12,7 @@ const TimetableView = () => {
   const [selectedRoom, setSelectedRoom] = useState("all");
   const [showSaveMenu, setShowSaveMenu] = useState(false);
   const timetableID = localStorage.getItem('selectedTimetableID');
-  const backendDataURL = `http://localhost:5000/api/data:${timetableID}`;
+  const backendDataURL = `http://localhost:5000/api/data/${timetableID}`;
   const schedulerAPI = "http://127.0.0.1:8080/api/schedule";
   useEffect(() => {
     setLoading(false);

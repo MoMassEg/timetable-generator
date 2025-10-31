@@ -1,4 +1,3 @@
-// routes/dataRoutes.js
 const express = require("express");
 const Course = require("../models/Course");
 const Instructor = require("../models/Instructor");
@@ -7,18 +6,28 @@ const Group = require("../models/Group");
 const Section = require("../models/Section");
 const TA = require("../models/TAs");
 const router = express.Router();
-
-// Get all data for a specific timetable
 router.get("/:timetableID", async (req, res) => {
   try {
     const { timetableID } = req.params;
+    
+    if (!timetableID) {
+      return res.status(400).json({ error: "timetableID is required" });
+    }
 
-    const courses = await Course.find({ timetableID }).sort({ priority: -1 });
-    const instructors = await Instructor.find({ timetableID });
-    const tas = await TA.find({ timetableID });
-    const rooms = await Room.find({ timetableID });
-    const groups = await Group.find({ timetableID });
-    const sections = await Section.find({ timetableID });
+    console.log("Searching for timetableID:", timetableID);
+
+    const allCourses = await Course.find();
+    console.log("Total courses in DB:", allCourses.length);
+    console.log("Sample courses:", allCourses.slice(0, 2));
+
+    const courses = await Course.find({ timetableID: timetableID }).sort({ priority: -1 });
+    console.log("Courses with filter:", courses.length, courses);
+
+    const instructors = await Instructor.find({ timetableID: timetableID });
+    const tas = await TA.find({ timetableID: timetableID });
+    const rooms = await Room.find({ timetableID: timetableID });
+    const groups = await Group.find({ timetableID: timetableID });
+    const sections = await Section.find({ timetableID: timetableID });
 
     const coursePriorityMap = {};
     courses.forEach(course => {
