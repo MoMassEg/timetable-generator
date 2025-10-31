@@ -5,6 +5,7 @@ const Rooms = () => {
   const [rooms, setRooms] = useState([]);
   const [showModal, setShowModal] = useState(false);
   const [editingRoom, setEditingRoom] = useState(null);
+  const [searchTerm, setSearchTerm] = useState("");
   const [formData, setFormData] = useState({
     roomID: "",
     type: "lec",
@@ -26,6 +27,17 @@ const Rooms = () => {
   useEffect(() => {
     fetchRooms();
   }, []);
+
+  const filteredRooms = rooms.filter(room => {
+    if (!searchTerm) return true;
+    const searchLower = searchTerm.toLowerCase();
+    return (
+      room.roomID.toLowerCase().includes(searchLower) ||
+      room.type.toLowerCase().includes(searchLower) ||
+      (room.labType && room.labType.toLowerCase().includes(searchLower)) ||
+      room.capacity.toString().includes(searchLower)
+    );
+  });
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -66,18 +78,27 @@ const Rooms = () => {
   const resetForm = () => {
     setShowModal(false);
     setEditingRoom(null);
-    setFormData({ roomID: "", type: "lec",labType: "", capacity: 1 });
+    setFormData({ roomID: "", type: "lec", labType: "", capacity: 1 });
   };
 
   return (
     <div className="card">
       <div className="card-header">
-        <h1 className="card-title">
-          Room Management
-        </h1>
+        <h1 className="card-title">Room Management</h1>
         <button onClick={() => setShowModal(true)} className="btn btn-primary">
           Add Room
         </button>
+      </div>
+
+      <div style={{ padding: "1rem" }}>
+        <input
+          type="text"
+          className="form-input"
+          placeholder="Search rooms..."
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+          style={{ marginBottom: "1rem" }}
+        />
       </div>
 
       <div className="table-container">
@@ -87,13 +108,13 @@ const Rooms = () => {
               <th>#</th>
               <th>Room ID</th>
               <th>Type</th>
-              <th>labType</th>
+              <th>Lab Type</th>
               <th>Capacity</th>
               <th>Actions</th>
             </tr>
           </thead>
           <tbody>
-            {rooms.map((room, index) => (
+            {filteredRooms.map((room, index) => (
               <tr key={room._id}>
                 <td>{index + 1}</td>
                 <td>{room.roomID}</td>
@@ -120,10 +141,10 @@ const Rooms = () => {
           </tbody>
         </table>
 
-        {rooms.length === 0 && (
+        {filteredRooms.length === 0 && (
           <div className="empty-state">
             <h3>No rooms found</h3>
-            <p>Add your first room to get started</p>
+            <p>{searchTerm ? "Try a different search term" : "Add your first room to get started"}</p>
           </div>
         )}
       </div>
@@ -132,13 +153,13 @@ const Rooms = () => {
         <div className="modal-overlay">
           <div className="modal">
             <div className="modal-header">
-              <h2>{editingRoom ? "Edit Room" : "Add New Room"}</h2>
+              <h2 className="modal-title">{editingRoom ? "Edit Room" : "Add New Room"}</h2>
               <button onClick={resetForm} className="modal-close">×</button>
             </div>
 
             <form onSubmit={handleSubmit}>
               <div className="form-group">
-                <label>Room ID</label>
+                <label className="form-label">Room ID</label>
                 <input
                   type="text"
                   className="form-input"
@@ -151,7 +172,7 @@ const Rooms = () => {
               </div>
 
               <div className="form-group">
-                <label>Type</label>
+                <label className="form-label">Type</label>
                 <select
                   className="form-select"
                   value={formData.type}
@@ -164,8 +185,9 @@ const Rooms = () => {
                   <option value="tut">Tutorial</option>
                 </select>
               </div>
+
               <div className="form-group">
-                <label>lab Type</label>
+                <label className="form-label">Lab Type</label>
                 <input
                   type="text"
                   className="form-input"
@@ -177,7 +199,7 @@ const Rooms = () => {
               </div>
 
               <div className="form-group">
-                <label>Capacity</label>
+                <label className="form-label">Capacity</label>
                 <input
                   type="number"
                   className="form-input"

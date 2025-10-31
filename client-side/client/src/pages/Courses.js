@@ -3,8 +3,10 @@ import axios from "axios";
 
 const Courses = () => {
   const [courses, setCourses] = useState([]);
+  const [instructors, setInstructors] = useState([]);
   const [showModal, setShowModal] = useState(false);
   const [editingCourse, setEditingCourse] = useState(null);
+  const [searchTerm, setSearchTerm] = useState("");
   const [formData, setFormData] = useState({
     courseID: "",
     courseName: "",
@@ -17,6 +19,7 @@ const Courses = () => {
 
   useEffect(() => {
     fetchCourses();
+    fetchInstructors();
   }, []);
 
   const fetchCourses = async () => {
@@ -27,6 +30,35 @@ const Courses = () => {
       console.error("Error fetching courses:", err);
     }
   };
+
+  const fetchInstructors = async () => {
+    try {
+      const res = await axios.get("http://localhost:5000/api/instructors");
+      setInstructors(res.data);
+    } catch (err) {
+      console.error("Error fetching instructors:", err);
+    }
+  };
+
+  const getAssignedInstructor = (courseID) => {
+    const instructor = instructors.find(inst => 
+      inst.qualifiedCourses.includes(courseID)
+    );
+    return instructor ? instructor.name : "Not Assigned";
+  };
+
+  const filteredCourses = courses.filter(course => {
+    if (!searchTerm) return true;
+    const searchLower = searchTerm.toLowerCase();
+    const assignedInstructor = getAssignedInstructor(course.courseID);
+    return (
+      course.courseID.toLowerCase().includes(searchLower) ||
+      course.courseName.toLowerCase().includes(searchLower) ||
+      course.type.toLowerCase().includes(searchLower) ||
+      (course.labType && course.labType.toLowerCase().includes(searchLower)) ||
+      assignedInstructor.toLowerCase().includes(searchLower)
+    );
+  });
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -95,6 +127,17 @@ const Courses = () => {
           </button>
         </div>
 
+        <div style={{ padding: "1rem" }}>
+          <input
+            type="text"
+            className="form-input"
+            placeholder="Search courses..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            style={{ marginBottom: "1rem" }}
+          />
+        </div>
+
         <div className="table-container">
           <table className="table">
             <thead>
@@ -106,11 +149,12 @@ const Courses = () => {
                 <th>Duration</th>
                 <th>Priority</th>
                 <th>All Year</th>
+                <th>Assigned Instructor</th>
                 <th>Actions</th>
               </tr>
             </thead>
             <tbody>
-              {courses.map((course) => (
+              {filteredCourses.map((course) => (
                 <tr key={course._id}>
                   <td>{course.courseID}</td>
                   <td>{course.courseName}</td>
@@ -123,6 +167,7 @@ const Courses = () => {
                       {course.allYear ? 'Yes' : 'No'}
                     </span>
                   </td>
+                  <td>{getAssignedInstructor(course.courseID)}</td>
                   <td>
                     <button
                       onClick={() => handleEdit(course)}
@@ -143,10 +188,10 @@ const Courses = () => {
             </tbody>
           </table>
 
-          {courses.length === 0 && (
+          {filteredCourses.length === 0 && (
             <div className="empty-state">
               <h3>No courses found</h3>
-              <p>Add your first course to get started</p>
+              <p>{searchTerm ? "Try a different search term" : "Add your first course to get started"}</p>
             </div>
           )}
         </div>

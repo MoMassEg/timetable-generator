@@ -4,8 +4,11 @@ import axios from "axios";
 const TAs = () => {
   const [tas, setTAs] = useState([]);
   const [courses, setCourses] = useState([]);
+  const [instructors, setInstructors] = useState([]);
   const [showModal, setShowModal] = useState(false);
   const [editingTA, setEditingTA] = useState(null);
+  const [courseSearchTerm, setCourseSearchTerm] = useState("");
+  const [searchTerm, setSearchTerm] = useState("");
   const [formData, setFormData] = useState({
     taID: "",
     name: "",
@@ -15,6 +18,7 @@ const TAs = () => {
   useEffect(() => {
     fetchTAs();
     fetchCourses();
+    fetchInstructors();
   }, []);
 
   const fetchTAs = async () => {
@@ -34,6 +38,57 @@ const TAs = () => {
       console.error("Error fetching courses:", err);
     }
   };
+
+  const fetchInstructors = async () => {
+    try {
+      const res = await axios.get("http://localhost:5000/api/instructors");
+      setInstructors(res.data);
+    } catch (err) {
+      console.error("Error fetching instructors:", err);
+    }
+  };
+
+  const getCourseName = (courseID) => {
+    const course = courses.find(c => c.courseID === courseID);
+    return course ? course.courseName : courseID;
+  };
+
+  const getAssignedInstructor = (courseID) => {
+    const instructor = instructors.find(inst => 
+      inst.qualifiedCourses && inst.qualifiedCourses.includes(courseID)
+    );
+    return instructor ? instructor.name : "Not Assigned";
+  };
+
+  const formatQualifiedCourses = (qualifiedCourses) => {
+    if (!qualifiedCourses || qualifiedCourses.length === 0) return "—";
+    return qualifiedCourses.map(courseID => {
+      const courseName = getCourseName(courseID);
+      return `${courseID} - ${courseName}`;
+    }).join(", ");
+  };
+
+  const filteredTAs = tas.filter(ta => {
+    if (!searchTerm) return true;
+    const searchLower = searchTerm.toLowerCase();
+    const matchesID = ta.taID.toLowerCase().includes(searchLower);
+    const matchesName = ta.name.toLowerCase().includes(searchLower);
+    const matchesCourses = ta.qualifiedCourses?.some(courseID => 
+      courseID.toLowerCase().includes(searchLower) || 
+      getCourseName(courseID).toLowerCase().includes(searchLower)
+    );
+    return matchesID || matchesName || matchesCourses;
+  });
+
+  const filteredCourses = courses.filter(course => {
+    if (!courseSearchTerm) return true;
+    const searchLower = courseSearchTerm.toLowerCase();
+    return (
+      course.courseID.toLowerCase().includes(searchLower) ||
+      course.courseName.toLowerCase().includes(searchLower) ||
+      course.type.toLowerCase().includes(searchLower)
+    );
+  });
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -83,6 +138,7 @@ const TAs = () => {
     setShowModal(false);
     setEditingTA(null);
     setFormData({ taID: "", name: "", qualifiedCourses: [] });
+    setCourseSearchTerm("");
   };
 
   return (
@@ -93,6 +149,17 @@ const TAs = () => {
           <button onClick={() => setShowModal(true)} className="btn btn-primary">
             Add TA
           </button>
+        </div>
+
+        <div style={{ padding: "1rem" }}>
+          <input
+            type="text"
+            className="form-input"
+            placeholder="Search TAs..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            style={{ marginBottom: "1rem" }}
+          />
         </div>
 
         <div className="table-container">
@@ -106,11 +173,11 @@ const TAs = () => {
               </tr>
             </thead>
             <tbody>
-              {tas.map((ta) => (
+              {filteredTAs.map((ta) => (
                 <tr key={ta._id}>
                   <td>{ta.taID}</td>
                   <td>{ta.name}</td>
-                  <td>{ta.qualifiedCourses.join(", ") || "—"}</td>
+                  <td>{formatQualifiedCourses(ta.qualifiedCourses)}</td>
                   <td>
                     <button
                       onClick={() => handleEdit(ta)}
@@ -131,10 +198,10 @@ const TAs = () => {
             </tbody>
           </table>
 
-          {tas.length === 0 && (
+          {filteredTAs.length === 0 && (
             <div className="empty-state">
               <h3>No TAs found</h3>
-              <p>Add your first TA to get started</p>
+              <p>{searchTerm ? "Try a different search term" : "Add your first TA to get started"}</p>
             </div>
           )}
         </div>
@@ -179,18 +246,54 @@ const TAs = () => {
 
               <div className="form-group">
                 <label className="form-label">Qualified Courses</label>
-                <div style={{ maxHeight: "150px", overflowY: "auto", border: "1px solid #d1d5db", borderRadius: "0.375rem", padding: "0.5rem" }}>
-                  {courses.map((course) => (
-                    <label key={course._id} style={{ display: "flex", alignItems: "center", marginBottom: "0.5rem" }}>
-                      <input
-                        type="checkbox"
-                        checked={formData.qualifiedCourses.includes(course.courseID)}
-                        onChange={() => handleCourseToggle(course.courseID)}
-                        style={{ marginRight: "0.5rem" }}
-                      />
-                      {course.courseName} ({course.type})
-                    </label>
-                  ))}
+                <input
+                  type="text"
+                  className="form-input"
+                  placeholder="Search courses..."
+                  value={courseSearchTerm}
+                  onChange={(e) => setCourseSearchTerm(e.target.value)}
+                  style={{ marginBottom: "0.5rem" }}
+                />
+                <div style={{ 
+                  maxHeight: "200px", 
+                  overflowY: "auto", 
+                  border: "1px solid #d1d5db", 
+                  borderRadius: "0.375rem", 
+                  padding: "0.5rem" 
+                }}>
+                  {filteredCourses.map((course) => {
+                    const assignedInstructor = getAssignedInstructor(course.courseID);
+                    return (
+                      <label 
+                        key={course._id} 
+                        style={{ 
+                          display: "flex", 
+                          alignItems: "center", 
+                          marginBottom: "0.5rem",
+                          padding: "0.25rem",
+                          backgroundColor: formData.qualifiedCourses.includes(course.courseID) ? "#e0f2fe" : "transparent",
+                          borderRadius: "0.25rem"
+                        }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={formData.qualifiedCourses.includes(course.courseID)}
+                          onChange={() => handleCourseToggle(course.courseID)}
+                          style={{ marginRight: "0.5rem" }}
+                        />
+                        <span style={{ flex: 1 }}>
+                          {course.courseID} - {course.courseName} ({course.type})
+                          <br />
+                          <small style={{ color: "#6b7280" }}>Assigned: {assignedInstructor}</small>
+                        </span>
+                      </label>
+                    );
+                  })}
+                  {filteredCourses.length === 0 && (
+                    <p style={{ textAlign: "center", color: "#6b7280", padding: "1rem" }}>
+                      No courses found
+                    </p>
+                  )}
                 </div>
               </div>
 

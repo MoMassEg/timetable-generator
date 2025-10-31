@@ -6,6 +6,8 @@ const Instructors = () => {
   const [courses, setCourses] = useState([]);
   const [showModal, setShowModal] = useState(false);
   const [editingInstructor, setEditingInstructor] = useState(null);
+  const [courseSearchTerm, setCourseSearchTerm] = useState("");
+  const [searchTerm, setSearchTerm] = useState("");
   const [formData, setFormData] = useState({
     instructorID: "",
     name: "",
@@ -34,6 +36,48 @@ const Instructors = () => {
       console.error("Error fetching courses:", err);
     }
   };
+
+  const getCourseName = (courseID) => {
+    const course = courses.find(c => c.courseID === courseID);
+    return course ? course.courseName : courseID;
+  };
+
+  const getAssignedInstructor = (courseID) => {
+    const instructor = instructors.find(inst => 
+      inst.qualifiedCourses && inst.qualifiedCourses.includes(courseID)
+    );
+    return instructor ? instructor.name : "Not Assigned";
+  };
+
+  const formatQualifiedCourses = (qualifiedCourses) => {
+    if (!qualifiedCourses || qualifiedCourses.length === 0) return "—";
+    return qualifiedCourses.map(courseID => {
+      const courseName = getCourseName(courseID);
+      return `${courseID} - ${courseName}`;
+    }).join(", ");
+  };
+
+  const filteredInstructors = instructors.filter(ins => {
+    if (!searchTerm) return true;
+    const searchLower = searchTerm.toLowerCase();
+    const matchesID = ins.instructorID.toLowerCase().includes(searchLower);
+    const matchesName = ins.name.toLowerCase().includes(searchLower);
+    const matchesCourses = ins.qualifiedCourses?.some(courseID => 
+      courseID.toLowerCase().includes(searchLower) || 
+      getCourseName(courseID).toLowerCase().includes(searchLower)
+    );
+    return matchesID || matchesName || matchesCourses;
+  });
+
+  const filteredCourses = courses.filter(course => {
+    if (!courseSearchTerm) return true;
+    const searchLower = courseSearchTerm.toLowerCase();
+    return (
+      course.courseID.toLowerCase().includes(searchLower) ||
+      course.courseName.toLowerCase().includes(searchLower) ||
+      course.type.toLowerCase().includes(searchLower)
+    );
+  });
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -86,6 +130,7 @@ const Instructors = () => {
     setShowModal(false);
     setEditingInstructor(null);
     setFormData({ instructorID: "", name: "", qualifiedCourses: [] });
+    setCourseSearchTerm("");
   };
 
   return (
@@ -96,6 +141,17 @@ const Instructors = () => {
           <button onClick={() => setShowModal(true)} className="btn btn-primary">
             Add Instructor
           </button>
+        </div>
+
+        <div style={{ padding: "1rem" }}>
+          <input
+            type="text"
+            className="form-input"
+            placeholder="Search instructors..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            style={{ marginBottom: "1rem" }}
+          />
         </div>
 
         <div className="table-container">
@@ -109,11 +165,11 @@ const Instructors = () => {
               </tr>
             </thead>
             <tbody>
-              {instructors.map((ins) => (
+              {filteredInstructors.map((ins) => (
                 <tr key={ins._id}>
                   <td>{ins.instructorID}</td>
                   <td>{ins.name}</td>
-                  <td>{ins.qualifiedCourses?.join(", ") || "—"}</td>
+                  <td>{formatQualifiedCourses(ins.qualifiedCourses)}</td>
                   <td>
                     <button
                       onClick={() => handleEdit(ins)}
@@ -134,10 +190,10 @@ const Instructors = () => {
             </tbody>
           </table>
 
-          {instructors.length === 0 && (
+          {filteredInstructors.length === 0 && (
             <div className="empty-state">
               <h3>No instructors found</h3>
-              <p>Add your first instructor to get started</p>
+              <p>{searchTerm ? "Try a different search term" : "Add your first instructor to get started"}</p>
             </div>
           )}
         </div>
@@ -182,29 +238,56 @@ const Instructors = () => {
 
               <div className="form-group">
                 <label className="form-label">Qualified Courses</label>
+                <input
+                  type="text"
+                  className="form-input"
+                  placeholder="Search courses..."
+                  value={courseSearchTerm}
+                  onChange={(e) => setCourseSearchTerm(e.target.value)}
+                  style={{ marginBottom: "0.5rem" }}
+                />
                 <div
                   style={{
-                    maxHeight: "150px",
+                    maxHeight: "200px",
                     overflowY: "auto",
                     border: "1px solid #d1d5db",
                     borderRadius: "0.375rem",
                     padding: "0.5rem",
                   }}
                 >
-                  {courses.map((course) => (
-                    <label
-                      key={course.courseID}
-                      style={{ display: "flex", alignItems: "center", marginBottom: "0.5rem" }}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={formData.qualifiedCourses.includes(course.courseID)}
-                        onChange={() => handleCourseToggle(course.courseID)}
-                        style={{ marginRight: "0.5rem" }}
-                      />
-                      {course.courseID} ({course.type})
-                    </label>
-                  ))}
+                  {filteredCourses.map((course) => {
+                    const assignedInstructor = getAssignedInstructor(course.courseID);
+                    return (
+                      <label
+                        key={course.courseID}
+                        style={{ 
+                          display: "flex", 
+                          alignItems: "center", 
+                          marginBottom: "0.5rem",
+                          padding: "0.25rem",
+                          backgroundColor: formData.qualifiedCourses.includes(course.courseID) ? "#e0f2fe" : "transparent",
+                          borderRadius: "0.25rem"
+                        }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={formData.qualifiedCourses.includes(course.courseID)}
+                          onChange={() => handleCourseToggle(course.courseID)}
+                          style={{ marginRight: "0.5rem" }}
+                        />
+                        <span style={{ flex: 1 }}>
+                          {course.courseID} - {course.courseName} ({course.type})
+                          <br />
+                          <small style={{ color: "#6b7280" }}>Assigned: {assignedInstructor}</small>
+                        </span>
+                      </label>
+                    );
+                  })}
+                  {filteredCourses.length === 0 && (
+                    <p style={{ textAlign: "center", color: "#6b7280", padding: "1rem" }}>
+                      No courses found
+                    </p>
+                  )}
                 </div>
               </div>
 
