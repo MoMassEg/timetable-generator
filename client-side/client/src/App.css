@@ -1112,3 +1112,71 @@ label {
 .tt-btn-secondary:hover {
   background: #545b62;
 }
+
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  
+  #printable-timetable,
+  #printable-timetable * {
+    visibility: visible;
+  }
+  
+  #printable-timetable {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+  }
+  
+  .header-card,
+  .filter-controls,
+  .btn-save,
+  .btn-refresh,
+  button {
+    display: none !important;
+  }
+  
+  .timetable-table {
+    width: 100%;
+    border-collapse: collapse;
+    page-break-inside: auto;
+  }
+  
+  .timetable-table tr {
+    page-break-inside: avoid;
+    page-break-after: auto;
+  }
+  
+  .timetable-table thead {
+    display: table-header-group;
+  }
+  
+  .timetable-table tfoot {
+    display: table-footer-group;
+  }
+  
+  .session-cell {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+    color-adjust: exact;
+  }
+  
+  .day-break {
+    page-break-before: always;
+  }
+  
+  .course-code {
+    font-size: 11pt !important;
+  }
+  
+  .course-name {
+    font-size: 9pt !important;
+  }
+  
+  .instructor,
+  .room {
+    font-size: 8pt !important;
+  }
+}

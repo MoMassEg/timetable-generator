@@ -1,7 +1,5 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import axios from "axios";
-import jsPDF from "jspdf";
-import "jspdf-autotable";
 import * as XLSX from "xlsx";
 
 const TimetableView = () => {
@@ -11,30 +9,88 @@ const TimetableView = () => {
   const [selectedInstructor, setSelectedInstructor] = useState("all");
   const [selectedRoom, setSelectedRoom] = useState("all");
   const [showSaveMenu, setShowSaveMenu] = useState(false);
+  const timetableRef = useRef(null);
+  
   const timetableID = localStorage.getItem('selectedTimetableID');
   const backendDataURL = `http://localhost:5000/api/data/${timetableID}`;
   const schedulerAPI = "http://127.0.0.1:8080/api/schedule";
+  
+  const CACHE_KEY = `timetable_cache_${timetableID}`;
+  const CACHE_TIMESTAMP_KEY = `timetable_cache_timestamp_${timetableID}`;
+  const CACHE_DURATION = 30 * 60 * 1000;
+
   useEffect(() => {
-    setLoading(false);
+    const loadData = async () => {
+      const cacheLoaded = await loadCachedData();
+      if (!cacheLoaded) {
+        await fetchAndGenerateSchedule();
+      }
+    };
+    loadData();
   }, []);
+
+  const loadCachedData = async () => {
+    try {
+      const cachedData = localStorage.getItem(CACHE_KEY);
+      const cachedTimestamp = localStorage.getItem(CACHE_TIMESTAMP_KEY);
+      
+      if (cachedData && cachedTimestamp) {
+        const timestamp = parseInt(cachedTimestamp, 10);
+        const now = Date.now();
+        
+        if (now - timestamp < CACHE_DURATION) {
+          const parsedData = JSON.parse(cachedData);
+          setSections(parsedData);
+          setLoading(false);
+          return true;
+        } else {
+          clearCache();
+        }
+      }
+    } catch (err) {
+      clearCache();
+    }
+    return false;
+  };
+
+  const saveToCache = (data) => {
+    try {
+      localStorage.setItem(CACHE_KEY, JSON.stringify(data));
+      localStorage.setItem(CACHE_TIMESTAMP_KEY, Date.now().toString());
+    } catch (err) {
+      if (err.name === 'QuotaExceededError') {
+        clearCache();
+        try {
+          localStorage.setItem(CACHE_KEY, JSON.stringify(data));
+          localStorage.setItem(CACHE_TIMESTAMP_KEY, Date.now().toString());
+        } catch (retryErr) {
+        }
+      }
+    }
+  };
+
+  const clearCache = () => {
+    localStorage.removeItem(CACHE_KEY);
+    localStorage.removeItem(CACHE_TIMESTAMP_KEY);
+  };
 
   const fetchAndGenerateSchedule = async () => {
     setLoading(true);
     setError(null);
     try {
       const dataResponse = await axios.get(backendDataURL);
-
       if (!dataResponse.data) throw new Error("Invalid data response");
 
       const scheduleResponse = await axios.post(schedulerAPI, dataResponse.data);
     
       if (scheduleResponse.data?.success) {
-        setSections(scheduleResponse.data.sections || []);
+        const newSections = scheduleResponse.data.sections || [];
+        setSections(newSections);
+        saveToCache(newSections);
       } else {
         setError("Schedule generation failed");
       }
     } catch (err) {
-      console.error("Error:", err);
       setError(err.response?.data?.error || "Failed to generate schedule");
     } finally {
       setLoading(false);
@@ -94,258 +150,230 @@ const TimetableView = () => {
     }).filter(section => section.schedule.length > 0);
   };
 
-  const exportToPDF = () => {
-    const doc = new jsPDF('l', 'mm', 'a4');
-    const filteredSections = getFilteredSections();
-    const days = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday"];
-    
-    let filterText = "Generated Timetable";
-    if (selectedInstructor !== "all") filterText += ` | Instructor: ${selectedInstructor}`;
-    if (selectedRoom !== "all") filterText += ` | Room: ${selectedRoom}`;
-    
-    doc.setFontSize(18);
-    doc.setFont(undefined, 'bold');
-    doc.text(filterText, 14, 15);
-    doc.setFontSize(9);
-    doc.setFont(undefined, 'normal');
-    doc.setTextColor(107, 114, 128);
-    doc.text(`Generated: ${new Date().toLocaleString('en-US', { 
-      year: 'numeric', 
-      month: 'long', 
-      day: 'numeric', 
-      hour: '2-digit', 
-      minute: '2-digit' 
-    })}`, 14, 22);
-
-    days.forEach((day, dayIndex) => {
-      if (dayIndex > 0) {
-        doc.addPage();
-      }
-
-      doc.setFontSize(14);
-      doc.setFont(undefined, 'bold');
-      doc.setTextColor(31, 41, 55);
-      doc.text(day, 14, 35);
-
-      const tableData = [];
-      const timeSlots = Array.from({ length: 8 }, (_, i) => i);
-
-      timeSlots.forEach((slot) => {
-        const slotIndex = dayIndex * 8 + slot;
-        const row = [getTimeLabel(slot)];
-
-        filteredSections.forEach(section => {
-          const session = section.schedule.find(s => s.slotIndex === slotIndex);
-          if (session) {
-            row.push(
-              `${session.courseID}\n${session.courseName}\n${session.instructorName}\n${session.roomID}`
-            );
-          } else {
-            row.push('');
-          }
-        });
-
-        tableData.push(row);
-      });
-
-      const headers = ['Time', ...filteredSections.map(s => 
-        `${s.sectionID}\n${s.groupID} - Year ${s.year}`
-      )];
-
-      doc.autoTable({
-        startY: 40,
-        head: [headers],
-        body: tableData,
-        theme: 'grid',
-        styles: { 
-          fontSize: 8, 
-          cellPadding: 3,
-          lineColor: [209, 213, 219],
-          lineWidth: 0.5,
-          textColor: [17, 24, 39],
-          font: 'helvetica'
-        },
-        headStyles: { 
-          fillColor: [55, 65, 81],
-          textColor: [255, 255, 255],
-          fontStyle: 'bold',
-          fontSize: 9,
-          halign: 'center',
-          valign: 'middle',
-          cellPadding: 4
-        },
-        columnStyles: {
-          0: { 
-            cellWidth: 25, 
-            fontStyle: 'bold',
-            fillColor: [243, 244, 246],
-            textColor: [55, 65, 81],
-            halign: 'center'
-          }
-        },
-        alternateRowStyles: {
-          fillColor: [249, 250, 251]
-        },
-        didParseCell: function(data) {
-          if (data.section === 'body' && data.column.index > 0) {
-            const section = filteredSections[data.column.index - 1];
-            const slotIndex = dayIndex * 8 + data.row.index;
-            const session = section?.schedule.find(s => s.slotIndex === slotIndex);
-            
-            if (session) {
-              if (session.type === 'lec') {
-                data.cell.styles.fillColor = [219, 234, 254];
-                data.cell.styles.textColor = [30, 64, 175];
-              } else if (session.type === 'lab') {
-                data.cell.styles.fillColor = [254, 243, 199];
-                data.cell.styles.textColor = [146, 64, 14];
-              } else if (session.type === 'tut') {
-                data.cell.styles.fillColor = [209, 250, 229];
-                data.cell.styles.textColor = [6, 95, 70];
-              }
-            }
-          }
-        },
-        margin: { top: 40, left: 14, right: 14 }
-      });
-
-      doc.setFontSize(8);
-      doc.setTextColor(107, 114, 128);
-      doc.text(`Page ${dayIndex + 1} of ${days.length}`, doc.internal.pageSize.width - 20, doc.internal.pageSize.height - 10);
-    });
-
-    doc.save(`timetable_${new Date().getTime()}.pdf`);
-    setShowSaveMenu(false);
+  const handlePrint = () => {
+    window.print();
   };
 
   const exportToExcel = () => {
-    const filteredSections = getFilteredSections();
-    const days = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday"];
-    const workbook = XLSX.utils.book_new();
+    try {
+      const filteredSections = getFilteredSections();
+      const days = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday"];
+      const workbook = XLSX.utils.book_new();
 
-    days.forEach((day, dayIndex) => {
-      const worksheetData = [];
-      
-      worksheetData.push([day]);
-      worksheetData.push([]);
-      
-      const headerRow = ['Time'];
-      filteredSections.forEach(section => {
-        headerRow.push(`${section.sectionID} - ${section.groupID} (Year ${section.year})`);
-      });
-      worksheetData.push(headerRow);
-
-      const timeSlots = Array.from({ length: 8 }, (_, i) => i);
-      timeSlots.forEach((slot) => {
-        const slotIndex = dayIndex * 8 + slot;
-        const row = [getTimeLabel(slot)];
-
+      days.forEach((day, dayIndex) => {
+        const worksheetData = [];
+        
+        worksheetData.push([`${day} - Timetable`]);
+        worksheetData.push([]);
+        worksheetData.push([`Generated: ${new Date().toLocaleString('en-US', { 
+          year: 'numeric', 
+          month: 'long', 
+          day: 'numeric', 
+          hour: '2-digit', 
+          minute: '2-digit' 
+        })}`]);
+        worksheetData.push([]);
+        
+        const headerRow = ['Time'];
         filteredSections.forEach(section => {
-          const session = section.schedule.find(s => s.slotIndex === slotIndex);
-          if (session) {
-            row.push(
-              `${session.courseID} - ${session.courseName}\nInstructor: ${session.instructorName}\nRoom: ${session.roomID}\nType: ${session.type.toUpperCase()}`
-            );
-          } else {
-            row.push('');
-          }
+          headerRow.push(`${section.sectionID}\n${section.groupID} - Year ${section.year}`);
+        });
+        worksheetData.push(headerRow);
+
+        const timeSlots = Array.from({ length: 8 }, (_, i) => i);
+        timeSlots.forEach((slot) => {
+          const slotIndex = dayIndex * 8 + slot;
+          const row = [getTimeLabel(slot)];
+
+          filteredSections.forEach(section => {
+            const session = section.schedule.find(s => s.slotIndex === slotIndex);
+            if (session) {
+              row.push(
+                `${session.courseID}\n${session.courseName}\n\nInstructor: ${session.instructorName}\nRoom: ${session.roomID}\nType: ${session.type.toUpperCase()}`
+              );
+            } else {
+              row.push('');
+            }
+          });
+
+          worksheetData.push(row);
         });
 
-        worksheetData.push(row);
-      });
+        const worksheet = XLSX.utils.aoa_to_sheet(worksheetData);
+        
+        worksheet['!cols'] = [
+          { wch: 20 },
+          ...filteredSections.map(() => ({ wch: 38 }))
+        ];
 
-      const worksheet = XLSX.utils.aoa_to_sheet(worksheetData);
-      
-      worksheet['!cols'] = [
-        { wch: 18 },
-        ...filteredSections.map(() => ({ wch: 35 }))
-      ];
+        worksheet['!rows'] = [
+          { hpt: 35 },
+          { hpt: 10 },
+          { hpt: 20 },
+          { hpt: 10 },
+          { hpt: 40 },
+          ...timeSlots.map(() => ({ hpt: 90 }))
+        ];
 
-      const range = XLSX.utils.decode_range(worksheet['!ref']);
-      for (let R = range.s.r; R <= range.e.r; ++R) {
-        for (let C = range.s.c; C <= range.e.c; ++C) {
-          const cellAddress = XLSX.utils.encode_cell({ r: R, c: C });
-          if (!worksheet[cellAddress]) continue;
-          
-          if (R === 0) {
-            worksheet[cellAddress].s = {
-              font: { bold: true, sz: 14, color: { rgb: "1F2937" } },
-              alignment: { horizontal: "center", vertical: "center" }
-            };
-          } else if (R === 2) {
-            worksheet[cellAddress].s = {
-              fill: { fgColor: { rgb: "374151" } },
-              font: { bold: true, color: { rgb: "FFFFFF" } },
-              alignment: { horizontal: "center", vertical: "center", wrapText: true },
-              border: {
-                top: { style: "thin", color: { rgb: "D1D5DB" } },
-                bottom: { style: "thin", color: { rgb: "D1D5DB" } },
-                left: { style: "thin", color: { rgb: "D1D5DB" } },
-                right: { style: "thin", color: { rgb: "D1D5DB" } }
-              }
-            };
-          } else if (R > 2 && C === 0) {
-            worksheet[cellAddress].s = {
-              fill: { fgColor: { rgb: "F3F4F6" } },
-              font: { bold: true, color: { rgb: "374151" } },
-              alignment: { horizontal: "center", vertical: "center" },
-              border: {
-                top: { style: "thin", color: { rgb: "D1D5DB" } },
-                bottom: { style: "thin", color: { rgb: "D1D5DB" } },
-                left: { style: "thin", color: { rgb: "D1D5DB" } },
-                right: { style: "thin", color: { rgb: "D1D5DB" } }
-              }
-            };
-          } else if (R > 2 && C > 0) {
-            const cellValue = worksheet[cellAddress].v;
-            let fillColor = "FFFFFF";
+        const range = XLSX.utils.decode_range(worksheet['!ref']);
+        
+        for (let R = range.s.r; R <= range.e.r; ++R) {
+          for (let C = range.s.c; C <= range.e.c; ++C) {
+            const cellAddress = XLSX.utils.encode_cell({ r: R, c: C });
+            if (!worksheet[cellAddress]) continue;
             
-            if (cellValue && cellValue.includes('Type:')) {
-              if (cellValue.includes('Type: LEC')) {
-                fillColor = "DBEAFE";
-              } else if (cellValue.includes('Type: LAB')) {
-                fillColor = "FEF3C7";
-              } else if (cellValue.includes('Type: TUT')) {
-                fillColor = "D1FAE5";
-              }
+            if (R === 0) {
+              worksheet[cellAddress].s = {
+                font: { 
+                  bold: true, 
+                  sz: 18, 
+                  color: { rgb: "1F2937" },
+                  name: 'Calibri'
+                },
+                fill: { 
+                  fgColor: { rgb: "F3F4F6" }
+                },
+                alignment: { 
+                  horizontal: "left", 
+                  vertical: "center",
+                  wrapText: true
+                },
+                border: {
+                  bottom: { style: "thick", color: { rgb: "374151" } }
+                }
+              };
             }
-            
-            worksheet[cellAddress].s = {
-              fill: { fgColor: { rgb: fillColor } },
-              alignment: { vertical: "top", wrapText: true },
-              border: {
-                top: { style: "thin", color: { rgb: "D1D5DB" } },
-                bottom: { style: "thin", color: { rgb: "D1D5DB" } },
-                left: { style: "thin", color: { rgb: "D1D5DB" } },
-                right: { style: "thin", color: { rgb: "D1D5DB" } }
+            else if (R === 2) {
+              worksheet[cellAddress].s = {
+                font: { 
+                  sz: 10, 
+                  color: { rgb: "6B7280" },
+                  italic: true,
+                  name: 'Calibri'
+                },
+                alignment: { 
+                  horizontal: "left", 
+                  vertical: "center" 
+                }
+              };
+            }
+            else if (R === 4) {
+              worksheet[cellAddress].s = {
+                fill: { 
+                  fgColor: { rgb: C === 0 ? "334155" : "475569" }
+                },
+                font: { 
+                  bold: true, 
+                  color: { rgb: "FFFFFF" },
+                  sz: 12,
+                  name: 'Calibri'
+                },
+                alignment: { 
+                  horizontal: "center", 
+                  vertical: "center", 
+                  wrapText: true 
+                },
+                border: {
+                  top: { style: "medium", color: { rgb: "1E293B" } },
+                  bottom: { style: "medium", color: { rgb: "1E293B" } },
+                  left: { style: "thin", color: { rgb: "64748B" } },
+                  right: { style: "thin", color: { rgb: "64748B" } }
+                }
+              };
+            }
+            else if (R > 4 && C === 0) {
+              worksheet[cellAddress].s = {
+                fill: { 
+                  fgColor: { rgb: "F1F5F9" }
+                },
+                font: { 
+                  bold: true, 
+                  color: { rgb: "334155" },
+                  sz: 11,
+                  name: 'Calibri'
+                },
+                alignment: { 
+                  horizontal: "center", 
+                  vertical: "center" 
+                },
+                border: {
+                  top: { style: "thin", color: { rgb: "CBD5E1" } },
+                  bottom: { style: "thin", color: { rgb: "CBD5E1" } },
+                  left: { style: "medium", color: { rgb: "94A3B8" } },
+                  right: { style: "medium", color: { rgb: "94A3B8" } }
+                }
+              };
+            }
+            else if (R > 4 && C > 0) {
+              const cellValue = worksheet[cellAddress].v;
+              let fillColor = "FFFFFF";
+              let textColor = "1E293B";
+              let fontWeight = false;
+              
+              if (cellValue && cellValue.includes('Type:')) {
+                if (cellValue.includes('LEC')) {
+                  fillColor = "DBEAFE";
+                  textColor = "1E3A8A";
+                  fontWeight = true;
+                } else if (cellValue.includes('LAB')) {
+                  fillColor = "FEF9C3";
+                  textColor = "78350F";
+                  fontWeight = true;
+                } else if (cellValue.includes('TUT')) {
+                  fillColor = "DCFCE7";
+                  textColor = "14532D";
+                  fontWeight = true;
+                }
               }
-            };
+              
+              if (!cellValue || cellValue === '') {
+                fillColor = (R - 5) % 2 === 0 ? "FFFFFF" : "F8FAFC";
+              }
+              
+              worksheet[cellAddress].s = {
+                fill: { 
+                  fgColor: { rgb: fillColor } 
+                },
+                font: {
+                  color: { rgb: textColor },
+                  sz: 10,
+                  bold: fontWeight,
+                  name: 'Calibri'
+                },
+                alignment: { 
+                  vertical: "top", 
+                  horizontal: "left",
+                  wrapText: true,
+                  indent: 1
+                },
+                border: {
+                  top: { style: "thin", color: { rgb: "E2E8F0" } },
+                  bottom: { style: "thin", color: { rgb: "E2E8F0" } },
+                  left: { style: "thin", color: { rgb: "CBD5E1" } },
+                  right: { style: "thin", color: { rgb: "CBD5E1" } }
+                }
+              };
+            }
           }
         }
-      }
 
-      worksheet['!rows'] = [
-        { hpt: 25 },
-        { hpt: 10 },
-        { hpt: 35 },
-        ...timeSlots.map(() => ({ hpt: 60 }))
-      ];
+        XLSX.utils.book_append_sheet(workbook, worksheet, day);
+      });
 
-      XLSX.utils.book_append_sheet(workbook, worksheet, day);
-    });
+      let filterText = '';
+      if (selectedInstructor !== "all") filterText += `_${selectedInstructor.replace(/\s+/g, '_')}`;
+      if (selectedRoom !== "all") filterText += `_${selectedRoom}`;
 
-    let filterText = '';
-    if (selectedInstructor !== "all") filterText += `_${selectedInstructor.replace(/\s+/g, '_')}`;
-    if (selectedRoom !== "all") filterText += `_${selectedRoom}`;
-
-    XLSX.writeFile(workbook, `timetable${filterText}_${new Date().getTime()}.xlsx`);
-    setShowSaveMenu(false);
+      XLSX.writeFile(workbook, `timetable${filterText}_${new Date().getTime()}.xlsx`);
+      setShowSaveMenu(false);
+    } catch (err) {
+      alert("Failed to export Excel. Error: " + err.message);
+    }
   };
 
   const renderTimetable = () => {
     const days = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday"];
     const timeSlots = Array.from({ length: 8 }, (_, i) => i);
-
     const filteredSections = getFilteredSections();
 
     if (filteredSections.length === 0) {
@@ -376,7 +404,7 @@ const TimetableView = () => {
     });
 
     return (
-      <div className="timetable-container">
+      <div className="timetable-container" ref={timetableRef} id="printable-timetable">
         <table className="timetable-table">
           <thead>
             <tr>
@@ -459,7 +487,7 @@ const TimetableView = () => {
     return (
       <div className="loading">
         <div className="spinner"></div>
-        <p>Generating timetable...</p>
+        <p>Loading timetable...</p>
       </div>
     );
 
@@ -513,7 +541,7 @@ const TimetableView = () => {
                   <polyline points="17 21 17 13 7 13 7 21"/>
                   <polyline points="7 3 7 8 15 8"/>
                 </svg>
-                Save
+                Export
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                   <polyline points="6 9 12 15 18 9"/>
                 </svg>
@@ -546,7 +574,7 @@ const TimetableView = () => {
                     overflow: 'hidden'
                   }}>
                     <button
-                      onClick={exportToPDF}
+                      onClick={handlePrint}
                       style={{
                         width: '100%',
                         padding: '0.75rem 1rem',
@@ -566,13 +594,11 @@ const TimetableView = () => {
                       onMouseLeave={(e) => e.target.style.backgroundColor = 'transparent'}
                     >
                       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>
-                        <polyline points="14 2 14 8 20 8"/>
-                        <line x1="16" y1="13" x2="8" y2="13"/>
-                        <line x1="16" y1="17" x2="8" y2="17"/>
-                        <polyline points="10 9 9 9 8 9"/>
+                        <polyline points="6 9 6 2 18 2 18 9"/>
+                        <path d="M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2"/>
+                        <rect x="6" y="14" width="12" height="8"/>
                       </svg>
-                      Export as PDF
+                      Print
                     </button>
                     <button
                       onClick={exportToExcel}
