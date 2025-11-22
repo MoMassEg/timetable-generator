@@ -1,9 +1,7 @@
-// routes/courseRoutes.js
 const express = require("express");
 const Course = require("../models/Course.js");
 const router = express.Router();
 
-// Get all courses for a specific timetable
 router.get("/:timetableID", async (req, res) => {
   try {
     const courses = await Course.find({ timetableID: req.params.timetableID }).sort({ priority: -1 });
@@ -13,7 +11,6 @@ router.get("/:timetableID", async (req, res) => {
   }
 });
 
-// Get course by ID
 router.get("/course/:id", async (req, res) => {
   try {
     const course = await Course.findById(req.params.id);
@@ -24,7 +21,6 @@ router.get("/course/:id", async (req, res) => {
   }
 });
 
-// Create course
 router.post("/", async (req, res) => {
   try {
     const { courseID, courseName, type, labType, duration, priority, allYear, timetableID } = req.body;
@@ -50,7 +46,6 @@ router.post("/", async (req, res) => {
   }
 });
 
-// Update course
 router.put("/:id", async (req, res) => {
   try {
     const updatedCourse = await Course.findByIdAndUpdate(
@@ -65,7 +60,6 @@ router.put("/:id", async (req, res) => {
   }
 });
 
-// Delete course
 router.delete("/:id", async (req, res) => {
   try {
     const deleted = await Course.findByIdAndDelete(req.params.id);

@@ -1,9 +1,7 @@
-// routes/instructorRoutes.js
 const express = require("express");
 const Instructor = require("../models/Instructor.js");
 const router = express.Router();
 
-// Get all instructors for a specific timetable
 router.get("/:timetableID", async (req, res) => {
   try {
     const instructors = await Instructor.find({ timetableID: req.params.timetableID });
@@ -13,7 +11,6 @@ router.get("/:timetableID", async (req, res) => {
   }
 });
 
-// Get instructor by ID
 router.get("/instructor/:id", async (req, res) => {
   try {
     const instructor = await Instructor.findById(req.params.id);
@@ -24,10 +21,9 @@ router.get("/instructor/:id", async (req, res) => {
   }
 });
 
-// Create instructor
 router.post("/", async (req, res) => {
   try {
-    const { instructorID, name, qualifiedCourses, timetableID } = req.body;
+    const { instructorID, name, qualifiedCourses, preferredTimeSlots, unavailableTimeSlots, timetableID } = req.body;
     
     if (!timetableID) {
       return res.status(400).json({ error: "timetableID is required" });
@@ -36,7 +32,9 @@ router.post("/", async (req, res) => {
     const newInstructor = new Instructor({ 
       instructorID, 
       name, 
-      qualifiedCourses, 
+      qualifiedCourses,
+      preferredTimeSlots,
+      unavailableTimeSlots,
       timetableID 
     });
     await newInstructor.save();
@@ -46,7 +44,6 @@ router.post("/", async (req, res) => {
   }
 });
 
-// Update instructor
 router.put("/:id", async (req, res) => {
   try {
     const updatedInstructor = await Instructor.findByIdAndUpdate(
@@ -61,7 +58,6 @@ router.put("/:id", async (req, res) => {
   }
 });
 
-// Delete instructor
 router.delete("/:id", async (req, res) => {
   try {
     const deleted = await Instructor.findByIdAndDelete(req.params.id);

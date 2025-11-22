@@ -1,11 +1,9 @@
-// routes/sectionRoutes.js
 const express = require("express");
 const Section = require("../models/Section.js");
 const Group = require("../models/Group");
 
 const router = express.Router();
 
-// Get all sections for a specific timetable
 router.get("/:timetableID", async (req, res) => {
   try {
     const sections = await Section.find({ timetableID: req.params.timetableID });
@@ -15,7 +13,6 @@ router.get("/:timetableID", async (req, res) => {
   }
 });
 
-// Get section by ID
 router.get("/section/:id", async (req, res) => {
   try {
     const section = await Section.findById(req.params.id);
@@ -26,7 +23,6 @@ router.get("/section/:id", async (req, res) => {
   }
 });
 
-// Create section
 router.post("/", async (req, res) => {
   try {
     const { sectionID, groupID, year, studentCount, assignedCourses, timetableID } = req.body;
@@ -62,7 +58,6 @@ router.post("/", async (req, res) => {
   }
 });
 
-// Update section
 router.put("/:id", async (req, res) => {
   try {
     const currentSection = await Section.findById(req.params.id);
@@ -95,7 +90,6 @@ router.put("/:id", async (req, res) => {
   }
 });
 
-// Delete section
 router.delete("/:id", async (req, res) => {
   try {
     const deleted = await Section.findByIdAndDelete(req.params.id);

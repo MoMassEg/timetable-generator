@@ -1,4 +1,3 @@
-// pages/Instructors.js
 import React, { useState, useEffect } from "react";
 import axios from "axios";
 
@@ -16,9 +15,22 @@ const Instructors = () => {
     instructorID: "",
     name: "",
     qualifiedCourses: [],
+    preferredTimeSlots: [],
+    unavailableTimeSlots: [],
   });
 
-  // Check for timetable changes
+  const days = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday"];
+  const times = [
+    "9:00 - 9:45",
+    "9:45 - 10:30",
+    "10:45 - 11:30",
+    "11:30 - 12:15",
+    "12:30 - 1:15",
+    "1:15 - 2:00",
+    "2:15 - 3:00",
+    "3:00 - 3:45"
+  ];
+
   useEffect(() => {
     const handleStorageChange = () => {
       const newTimetableID = localStorage.getItem("selectedTimetableID");
@@ -33,7 +45,6 @@ const Instructors = () => {
     };
   }, []);
 
-  // Fetch data when timetableID changes
   useEffect(() => {
     if (timetableID) {
       fetchInstructors();
@@ -149,6 +160,8 @@ const Instructors = () => {
       instructorID: ins.instructorID,
       name: ins.name,
       qualifiedCourses: ins.qualifiedCourses || [],
+      preferredTimeSlots: ins.preferredTimeSlots || [],
+      unavailableTimeSlots: ins.unavailableTimeSlots || [],
     });
     setShowModal(true);
   };
@@ -176,10 +189,43 @@ const Instructors = () => {
     }));
   };
 
+  const handleTimeSlotToggle = (slotIndex, type) => {
+    setFormData((prev) => {
+      const currentSlots = prev[type];
+      const otherType = type === 'preferredTimeSlots' ? 'unavailableTimeSlots' : 'preferredTimeSlots';
+      const otherSlots = prev[otherType];
+
+      if (currentSlots.includes(slotIndex)) {
+        return {
+          ...prev,
+          [type]: currentSlots.filter(slot => slot !== slotIndex)
+        };
+      } else {
+        return {
+          ...prev,
+          [type]: [...currentSlots, slotIndex],
+          [otherType]: otherSlots.filter(slot => slot !== slotIndex)
+        };
+      }
+    });
+  };
+
+  const getSlotStatus = (slotIndex) => {
+    if (formData.preferredTimeSlots.includes(slotIndex)) return 'preferred';
+    if (formData.unavailableTimeSlots.includes(slotIndex)) return 'unavailable';
+    return 'available';
+  };
+
   const resetForm = () => {
     setShowModal(false);
     setEditingInstructor(null);
-    setFormData({ instructorID: "", name: "", qualifiedCourses: [] });
+    setFormData({ 
+      instructorID: "", 
+      name: "", 
+      qualifiedCourses: [],
+      preferredTimeSlots: [],
+      unavailableTimeSlots: []
+    });
     setCourseSearchTerm("");
   };
 
@@ -283,7 +329,7 @@ const Instructors = () => {
 
       {showModal && (
         <div className="modal-overlay" onClick={resetForm}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
+          <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: "800px", width: "90%" }}>
             <div className="modal-header">
               <h2 className="modal-title">
                 {editingInstructor ? "Edit Instructor" : "Add New Instructor"}
@@ -374,6 +420,94 @@ const Instructors = () => {
                       No courses found
                     </p>
                   )}
+                </div>
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Time Preferences</label>
+                <div style={{ marginBottom: "1rem" }}>
+                  <div style={{ display: "flex", gap: "1rem", marginBottom: "0.5rem" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                      <div style={{ width: "20px", height: "20px", backgroundColor: "#10b981", borderRadius: "4px" }}></div>
+                      <span>Preferred</span>
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                      <div style={{ width: "20px", height: "20px", backgroundColor: "#ef4444", borderRadius: "4px" }}></div>
+                      <span>Unavailable</span>
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                      <div style={{ width: "20px", height: "20px", backgroundColor: "#f3f4f6", border: "1px solid #d1d5db", borderRadius: "4px" }}></div>
+                      <span>Available</span>
+                    </div>
+                  </div>
+                </div>
+                
+                <div style={{ overflowX: "auto" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                    <thead>
+                      <tr>
+                        <th style={{ padding: "0.5rem", border: "1px solid #d1d5db", backgroundColor: "#f9fafb" }}>Time</th>
+                        {days.map(day => (
+                          <th key={day} style={{ padding: "0.5rem", border: "1px solid #d1d5db", backgroundColor: "#f9fafb", minWidth: "80px" }}>
+                            {day}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {times.map((time, timeIndex) => (
+                        <tr key={time}>
+                          <td style={{ padding: "0.5rem", border: "1px solid #d1d5db", fontWeight: "500", fontSize: "0.875rem" }}>
+                            {time}
+                          </td>
+                          {days.map((day, dayIndex) => {
+                            const slotIndex = dayIndex * 8 + timeIndex;
+                            const status = getSlotStatus(slotIndex);
+                            return (
+                              <td key={`${day}-${timeIndex}`} style={{ padding: "0.25rem", border: "1px solid #d1d5db" }}>
+                                <div style={{ display: "flex", gap: "0.25rem" }}>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleTimeSlotToggle(slotIndex, 'preferredTimeSlots')}
+                                    disabled={loading || status === 'unavailable'}
+                                    style={{
+                                      width: "100%",
+                                      height: "30px",
+                                      border: "1px solid #d1d5db",
+                                      borderRadius: "4px",
+                                      backgroundColor: status === 'preferred' ? "#10b981" : "#f3f4f6",
+                                      cursor: status === 'unavailable' ? "not-allowed" : "pointer",
+                                      fontSize: "0.75rem"
+                                    }}
+                                    title="Click to set as preferred"
+                                  >
+                                    P
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleTimeSlotToggle(slotIndex, 'unavailableTimeSlots')}
+                                    disabled={loading || status === 'preferred'}
+                                    style={{
+                                      width: "100%",
+                                      height: "30px",
+                                      border: "1px solid #d1d5db",
+                                      borderRadius: "4px",
+                                      backgroundColor: status === 'unavailable' ? "#ef4444" : "#f3f4f6",
+                                      cursor: status === 'preferred' ? "not-allowed" : "pointer",
+                                      fontSize: "0.75rem"
+                                    }}
+                                    title="Click to set as unavailable"
+                                  >
+                                    U
+                                  </button>
+                                </div>
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
               </div>
 

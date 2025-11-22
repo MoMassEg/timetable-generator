@@ -7,37 +7,12 @@
 #include <unordered_set>
 #include <algorithm>
 #include <iomanip>
-#include <sstream>
 #include <chrono>
+#include <stack>
 
 using json = nlohmann::json;
 using namespace httplib;
 using namespace std;
-
-#define all(x) (x).begin(),(x).end()
-
-string lastError = "";
-string firstError = "";
-string deepestError = ""; 
-int maxDepthReached = 0;
-int deepestFailureDepth = 0;
-int recursionDepth = 0;
-const int MAX_RECURSION_DEPTH = 100000;
-auto startTime = chrono::steady_clock::now();
-const int MAX_SOLVE_TIME_SECONDS = 60;
-
-struct FailureInfo {
-    string courseID;
-    string courseName;
-    string sectionID;
-    string reason;
-    int depth;
-    int slotsAvailable;
-    int roomsAvailable;
-};
-
-vector<FailureInfo> failureHistory;
-const int MAX_FAILURE_HISTORY = 10;
 
 struct Course {
     string courseID, courseName, type;
@@ -49,23 +24,21 @@ struct Course {
 struct Instructor {
     string instructorID, name;
     vector<string> qualifiedCourses;
+    vector<int> preferredTimeSlots;
+    vector<int> unavailableTimeSlots;
 };
 
 struct TA {
     string taID, name;
     vector<string> qualifiedCourses;
+    vector<int> preferredTimeSlots;
+    vector<int> unavailableTimeSlots;
 };
 
 struct Room {
     string roomID, type;
     string labType;
     int capacity;
-};
-
-struct Group {
-    string groupID;
-    int year;
-    vector<string> sections;
 };
 
 struct Section {
@@ -86,500 +59,350 @@ struct Slot {
     Slot() : duration(0), istaken(false), isCont(false) {}
 };
 
+struct CSPVariable {
+    int id;
+    string courseID;
+    vector<int> targetSectionIndices;
+    int totalStudents;
+
+    int duration;
+    int availableInstructorsCount;
+    bool isHardConstraint;
+};
+
+
+struct CSPValue {
+    int startSlot;
+    string instructorID;
+    string roomID;
+};
+
 vector<Course> courses;
 vector<Instructor> instructors;
 vector<TA> tas;
 vector<Room> rooms;
 vector<Section> sections;
-vector<Group> groups;
 
 const int SLOTS_MAX = 40;
 int SECTIONS_MAX;
 vector<vector<Slot>> Timetable;
 
 unordered_map<string, int> sectionToIndex;
-unordered_set<string> instructorBusy[SLOTS_MAX];
-unordered_set<string> roomBusy[SLOTS_MAX];
-
-unordered_map<string, string> sectionToGroup;
-unordered_map<string, vector<string>> groupToSections;
-unordered_map<int, vector<string>> yearToSections;
-
-vector<unordered_set<string>> scheduledCourses;
+unordered_map<string, vector<int>> groupToSectionIndices;
 unordered_map<string, Course> getCourse;
 
-bool isQualified(string instructorID, string courseID, bool isTA) {
-    if (isTA) {
-        for (auto& ta : tas) {
-            if (ta.taID == instructorID) {
-                return find(all(ta.qualifiedCourses), courseID) != ta.qualifiedCourses.end();
-            }
+unordered_set<string> instructorBusy[SLOTS_MAX];
+unordered_set<string> roomBusy[SLOTS_MAX];
+vector<unordered_set<string>> sectionScheduledCourses;
+
+string lastError = "";
+int iterationCount = 0;
+const int MAX_ITERATIONS = 5000000;
+auto startTime = chrono::steady_clock::now();
+
+string getInstructorName(string instructorID) {
+    for (auto& inst : instructors) if (inst.instructorID == instructorID) return inst.name;
+    for (auto& ta : tas) if (ta.taID == instructorID) return ta.name;
+    return "";
+}
+
+bool isInstructorAvailable(string instructorID, int slot) {
+    if (instructorBusy[slot].count(instructorID)) return false;
+
+    for (auto& inst : instructors) {
+        if (inst.instructorID == instructorID) {
+            for (int s : inst.unavailableTimeSlots) if (s == slot) return false;
+            return true;
         }
     }
-    else {
-        for (auto& inst : instructors) {
-            if (inst.instructorID == instructorID) {
-                return find(all(inst.qualifiedCourses), courseID) != inst.qualifiedCourses.end();
-            }
+    for (auto& ta : tas) {
+        if (ta.taID == instructorID) {
+            for (int s : ta.unavailableTimeSlots) if (s == slot) return false;
+            return true;
+        }
+    }
+    return true;
+}
+
+bool isQualified(string instructorID, string courseID) {
+    for (auto& inst : instructors) {
+        if (inst.instructorID == instructorID) {
+            return find(inst.qualifiedCourses.begin(), inst.qualifiedCourses.end(), courseID) != inst.qualifiedCourses.end();
+        }
+    }
+    for (auto& ta : tas) {
+        if (ta.taID == instructorID) {
+            return find(ta.qualifiedCourses.begin(), ta.qualifiedCourses.end(), courseID) != ta.qualifiedCourses.end();
         }
     }
     return false;
 }
 
-int getTotalStudents(vector<int>& sectionIndices) {
-    int total = 0;
-    for (int idx : sectionIndices) {
-        total += sections[idx].studentCount;
+void applyMove(const CSPVariable& var, const CSPValue& val) {
+    string type = getCourse[var.courseID].type;
+
+    for (int secIdx : var.targetSectionIndices) {
+        sectionScheduledCourses[secIdx].insert(var.courseID);
+
+        Timetable[val.startSlot][secIdx].courseID = var.courseID;
+        Timetable[val.startSlot][secIdx].type = type;
+        Timetable[val.startSlot][secIdx].roomID = val.roomID;
+        Timetable[val.startSlot][secIdx].instructorID = val.instructorID;
+        Timetable[val.startSlot][secIdx].duration = var.duration;
+        Timetable[val.startSlot][secIdx].istaken = true;
+        Timetable[val.startSlot][secIdx].isCont = false;
+
+        for (int i = 1; i < var.duration; i++) {
+            Timetable[val.startSlot + i][secIdx].courseID = var.courseID;
+            Timetable[val.startSlot + i][secIdx].type = type;
+            Timetable[val.startSlot + i][secIdx].roomID = val.roomID;
+            Timetable[val.startSlot + i][secIdx].instructorID = val.instructorID;
+            Timetable[val.startSlot + i][secIdx].duration = var.duration;
+            Timetable[val.startSlot + i][secIdx].istaken = true;
+            Timetable[val.startSlot + i][secIdx].isCont = true;
+        }
     }
-    return total;
+
+    for (int s = val.startSlot; s < val.startSlot + var.duration; s++) {
+        instructorBusy[s].insert(val.instructorID);
+        if (val.roomID != "") roomBusy[s].insert(val.roomID);
+    }
 }
 
-string getInstructorName(string instructorID) {
-    for (auto inst : instructors) {
-        if (inst.instructorID == instructorID) {
-            return inst.name;
+void undoMove(const CSPVariable& var, const CSPValue& val) {
+    for (int secIdx : var.targetSectionIndices) {
+        sectionScheduledCourses[secIdx].erase(var.courseID);
+        for (int s = val.startSlot; s < val.startSlot + var.duration; s++) {
+            Timetable[s][secIdx] = Slot();
         }
     }
 
-    for (auto ta : tas) {
-        if (ta.taID == instructorID) {
-            return ta.name;
-        }
+    for (int s = val.startSlot; s < val.startSlot + var.duration; s++) {
+        instructorBusy[s].erase(val.instructorID);
+        if (val.roomID != "") roomBusy[s].erase(val.roomID);
     }
-
-    return "";
 }
 
-bool valid(vector<int>& targetSections, int slot, int duration, string instructorID, string roomID, string courseID) {
-    if (duration > 1 && slot % duration != 0) return false;
-    if (slot < 0 || slot >= SLOTS_MAX) return false;
-    if (slot + duration > SLOTS_MAX) return false;
+bool isValidMove(const CSPVariable& var, const CSPValue& val) {
+    if (val.startSlot + var.duration > SLOTS_MAX) return false;
+    if (var.duration > 1 && val.startSlot % var.duration != 0) return false;
 
-    for (int sec : targetSections) {
-        if (sec < 0 || sec >= SECTIONS_MAX) return false;
+    for (int s = val.startSlot; s < val.startSlot + var.duration; s++) {
+        if (!isInstructorAvailable(val.instructorID, s)) return false;
+    }
 
-        for (int s = slot; s < slot + duration; s++) {
-            if (Timetable[s][sec].istaken) return false;
+    if (val.roomID != "") {
+        for (int s = val.startSlot; s < val.startSlot + var.duration; s++) {
+            if (roomBusy[s].count(val.roomID)) return false;
         }
     }
 
-    for (int s = slot; s < slot + duration; s++) {
-        if (instructorBusy[s].find(instructorID) != instructorBusy[s].end()) return false;
-    }
-
-    if (courseID != "GRAD1" && courseID != "GRAD2")
-        for (int s = slot; s < slot + duration; s++) {
-            if (roomBusy[s].find(roomID) != roomBusy[s].end()) return false;
+    for (int secIdx : var.targetSectionIndices) {
+        for (int s = val.startSlot; s < val.startSlot + var.duration; s++) {
+            if (Timetable[s][secIdx].istaken) return false;
         }
+    }
 
     return true;
 }
 
-void place(vector<int>& targetSections, string courseID, string type, int duration, string instructorID, string roomID, int slot) {
+vector<CSPValue> generateDomain(const CSPVariable& var) {
+    vector<CSPValue> domain;
+    const Course& c = getCourse[var.courseID];
 
-    for (int sec : targetSections) {
-        Timetable[slot][sec].courseID = courseID;
-        Timetable[slot][sec].type = type;
-        Timetable[slot][sec].roomID = roomID;
-        Timetable[slot][sec].instructorID = instructorID;
-        Timetable[slot][sec].duration = duration;
-        Timetable[slot][sec].istaken = true;
-        Timetable[slot][sec].isCont = false;
+    vector<string> qualifiedInstructors;
+    for (auto& inst : instructors) if (isQualified(inst.instructorID, var.courseID)) qualifiedInstructors.push_back(inst.instructorID);
+    for (auto& ta : tas) if (isQualified(ta.taID, var.courseID)) qualifiedInstructors.push_back(ta.taID);
 
-        for (int i = 1; i < duration; i++) {
-            Timetable[slot + i][sec].courseID = courseID;
-            Timetable[slot + i][sec].type = type;
-            Timetable[slot + i][sec].roomID = roomID;
-            Timetable[slot + i][sec].instructorID = instructorID;
-            Timetable[slot + i][sec].duration = duration;
-            Timetable[slot + i][sec].istaken = true;
-            Timetable[slot + i][sec].isCont = true;
-        }
+    if (qualifiedInstructors.empty()) return domain;
 
-        scheduledCourses[sec].insert(courseID);
-    }
-
-    for (int s = slot; s < slot + duration; s++) {
-        instructorBusy[s].insert(instructorID);
-        if (courseID != "GRAD1" && courseID != "GRAD2")
-            roomBusy[s].insert(roomID);
-    }
-}
-
-void remove(vector<int>& targetSections, string courseID, string instructorID, string roomID, int slot, int duration) {
-    for (int sec : targetSections) {
-        for (int s = slot; s < slot + duration; s++) {
-            Timetable[s][sec] = Slot();
-        }
-
-        scheduledCourses[sec].erase(courseID);
-    }
-
-    for (int s = slot; s < slot + duration; s++) {
-        instructorBusy[s].erase(instructorID);
-        if (courseID != "GRAD1" && courseID != "GRAD2")
-            roomBusy[s].erase(roomID);
-    }
-}
-
-void recordFailure(const FailureInfo& failure) {
-    if (failureHistory.size() >= MAX_FAILURE_HISTORY) {
-        failureHistory.erase(failureHistory.begin());
-    }
-    failureHistory.push_back(failure);
-
-    if (failure.depth > deepestFailureDepth) {
-        deepestFailureDepth = failure.depth;
-        deepestError = failure.reason;
-    }
-}
-
-int countAvailableConsecutiveSlots(int sectionIdx, int duration) {
-    int count = 0;
-    for (int slot = 0; slot <= SLOTS_MAX - duration; slot++) {
-        bool available = true;
-        for (int s = slot; s < slot + duration; s++) {
-            if (Timetable[s][sectionIdx].istaken) {
-                available = false;
-                break;
-            }
-        }
-        if (available) count++;
-    }
-    return count;
-}
-
-bool solve(int sectionIdx) {
-
-    auto currentTime = chrono::steady_clock::now();
-    auto elapsed = chrono::duration_cast<chrono::seconds>(currentTime - startTime).count();
-    if (elapsed > MAX_SOLVE_TIME_SECONDS) {
-        string error = "Timeout: Could not find solution within " + to_string(MAX_SOLVE_TIME_SECONDS) + " seconds.";
-        lastError = error;
-        if (recursionDepth > deepestFailureDepth) {
-            deepestError = error;
-            deepestFailureDepth = recursionDepth;
-        }
-        return false;
-    }
-
-    recursionDepth++;
-    if (recursionDepth > maxDepthReached) {
-        maxDepthReached = recursionDepth;
-    }
-
-    if (recursionDepth > MAX_RECURSION_DEPTH) {
-        string error = "Maximum recursion depth exceeded.";
-        lastError = error;
-        if (recursionDepth > deepestFailureDepth) {
-            deepestError = error;
-            deepestFailureDepth = recursionDepth;
-        }
-        recursionDepth--;
-        return false;
-    }
-
-    if (sectionIdx >= sections.size()) {
-        recursionDepth--;
-        return true;
-    }
-
-    vector<string>& coursesToSchedule = sections[sectionIdx].assignedCourses;
-    bool allScheduled = true;
-    for (auto courseID : coursesToSchedule) {
-        if (scheduledCourses[sectionIdx].find(courseID) == scheduledCourses[sectionIdx].end()) {
-            allScheduled = false;
-            break;
-        }
-    }
-
-    if (allScheduled) {
-        bool result = solve(sectionIdx + 1);
-        recursionDepth--;
-        return result;
-    }
-
-    string courseID = "";
-    for (auto cid : coursesToSchedule) {
-        if (scheduledCourses[sectionIdx].find(cid) == scheduledCourses[sectionIdx].end()) {
-            courseID = cid;
-            break;
-        }
-    }
-
-    if (getCourse.find(courseID) == getCourse.end()) {
-        string error = "Course not found: " + courseID + " (section: " + sections[sectionIdx].sectionID + ")";
-        lastError = error;
-        if (recursionDepth > deepestFailureDepth) {
-            deepestError = error;
-            deepestFailureDepth = recursionDepth;
-        }
-
-        FailureInfo failure;
-        failure.courseID = courseID;
-        failure.courseName = "UNKNOWN";
-        failure.sectionID = sections[sectionIdx].sectionID;
-        failure.reason = "Course definition not found";
-        failure.depth = recursionDepth;
-        recordFailure(failure);
-
-        recursionDepth--;
-        return false;
-    }
-
-    Course course = getCourse[courseID];
-    vector<int> targetSections;
-
-    vector<string> candidateSections;
-    string groupID = sections[sectionIdx].groupID;
-    int currentYear = sections[sectionIdx].year;
-
-    if (course.allYear) {
-        if (yearToSections.find(currentYear) != yearToSections.end()) {
-            candidateSections = yearToSections[currentYear];
-        }
-    }
-    else if (course.type == "Lecture") {
-        if (groupToSections.find(groupID) != groupToSections.end()) {
-            candidateSections = groupToSections[groupID];
-        }
+    vector<string> qualifiedRooms;
+    if (var.courseID == "GRAD1" || var.courseID == "GRAD2") {
+        qualifiedRooms.push_back("");
     }
     else {
-        targetSections.push_back(sectionIdx);
+        for (auto& room : rooms) {
+            if (room.type != c.type) continue;
+            if (c.type == "Lab" && !c.labType.empty() && room.labType != c.labType) continue;
+            if (!c.allYear && room.capacity < var.totalStudents) continue;
+            qualifiedRooms.push_back(room.roomID);
+        }
     }
 
-    if (course.allYear || course.type == "Lecture") {
-        bool currentSectionNeedsCourse = find(all(sections[sectionIdx].assignedCourses), courseID)
-            != sections[sectionIdx].assignedCourses.end();
+    if (qualifiedRooms.empty()) return domain;
 
-        if (!currentSectionNeedsCourse) {
-            scheduledCourses[sectionIdx].insert(courseID);
-            bool result = solve(sectionIdx);
-            recursionDepth--;
-            return result;
+    for (int slot = 0; slot <= SLOTS_MAX - c.duration; slot++) {
+
+        bool sectionsFree = true;
+        for (int secIdx : var.targetSectionIndices) {
+            for (int s = slot; s < slot + c.duration; s++) {
+                if (Timetable[s][secIdx].istaken) { sectionsFree = false; break; }
+            }
+            if (!sectionsFree) break;
         }
+        if (!sectionsFree) continue;
 
-        bool allScheduled = true;
-        for (auto& secID : candidateSections) {
-            auto it = sectionToIndex.find(secID);
-            if (it == sectionToIndex.end()) continue;
+        for (const string& instID : qualifiedInstructors) {
+            bool instFree = true;
+            for (int s = slot; s < slot + c.duration; s++) {
+                if (!isInstructorAvailable(instID, s)) { instFree = false; break; }
+            }
+            if (!instFree) continue;
 
-            int idx = it->second;
+            for (const string& roomID : qualifiedRooms) {
+                CSPValue val;
+                val.startSlot = slot;
+                val.instructorID = instID;
+                val.roomID = roomID;
 
-            bool sectionNeedsCourse = find(all(sections[idx].assignedCourses), courseID)
-                != sections[idx].assignedCourses.end();
-
-            if (sectionNeedsCourse) {
-                if (scheduledCourses[idx].find(courseID) == scheduledCourses[idx].end()) {
-                    allScheduled = false;
-                    break;
+                if (isValidMove(var, val)) {
+                    domain.push_back(val);
                 }
             }
         }
-
-        if (allScheduled) {
-            scheduledCourses[sectionIdx].insert(courseID);
-            bool result = solve(sectionIdx);
-            recursionDepth--;
-            return result;
-        }
-
-        for (auto& secID : candidateSections) {
-            auto it = sectionToIndex.find(secID);
-            if (it == sectionToIndex.end()) continue;
-
-            int idx = it->second;
-
-            if (find(all(sections[idx].assignedCourses), courseID) != sections[idx].assignedCourses.end() &&
-                scheduledCourses[idx].find(courseID) == scheduledCourses[idx].end()) {
-                targetSections.push_back(idx);
-            }
-        }
-
-        if (targetSections.empty()) {
-            scheduledCourses[sectionIdx].insert(courseID);
-            bool result = solve(sectionIdx);
-            recursionDepth--;
-            return result;
-        }
     }
 
-    int totalStudents = getTotalStudents(targetSections);
+    return domain;
+}
 
-    vector<string> candidates;
-    for (auto inst : instructors) {
-        if (isQualified(inst.instructorID, courseID, false)) {
-            candidates.push_back(inst.instructorID);
-        }
-    }
+vector<CSPVariable> identifyVariables() {
+    vector<CSPVariable> variables;
+    int varIdCounter = 0;
 
-    for (auto ta : tas) {
-        if (isQualified(ta.taID, courseID, true)) {
-            candidates.push_back(ta.taID);
-        }
-    }
+    unordered_set<string> processedGroupCourses;
 
-    if (candidates.empty()) {
-        string error = "ROOT CAUSE: No qualified instructor/TA for: " + course.courseName + " (" + courseID + ")";
-        lastError = error;
-        if (recursionDepth > deepestFailureDepth) {
-            deepestError = error;
-            deepestFailureDepth = recursionDepth;
-        }
+    for (int i = 0; i < sections.size(); i++) {
+        Section& sec = sections[i];
 
-        FailureInfo failure;
-        failure.courseID = courseID;
-        failure.courseName = course.courseName;
-        failure.sectionID = sections[sectionIdx].sectionID;
-        failure.reason = "No qualified instructor or TA";
-        failure.depth = recursionDepth;
-        recordFailure(failure);
+        for (const string& cID : sec.assignedCourses) {
+            if (getCourse.find(cID) == getCourse.end()) continue;
+            Course& c = getCourse[cID];
 
-        recursionDepth--;
-        return false;
-    }
-
-    bool attemptMade = false;
-    int validSlotsChecked = 0;
-    int roomsChecked = 0;
-    int totalAttempts = 0;
-
-    for (int slot = 0; slot < SLOTS_MAX; slot++) {
-        for (auto instructorID : candidates) {
-            if (courseID == "GRAD1" || courseID == "GRAD2") {
-                if (!valid(targetSections, slot, course.duration, instructorID, "", courseID)) {
+            if (c.type == "Lecture" || c.allYear) {
+                string groupKey = sec.groupID + "_" + cID;
+                if (processedGroupCourses.find(groupKey) != processedGroupCourses.end()) {
                     continue;
                 }
-                attemptMade = true;
-                totalAttempts++;
 
-                place(targetSections, courseID, course.type, course.duration, instructorID, "", slot);
+                CSPVariable var;
+                var.id = varIdCounter++;
+                var.courseID = cID;
+                var.isHardConstraint = (cID == "GRAD1" || cID == "GRAD2");
+                var.duration = c.duration;
 
-                if (solve(sectionIdx)) {
-                    recursionDepth--;
-                    return true;
+                if (groupToSectionIndices.count(sec.groupID)) {
+                    var.targetSectionIndices = groupToSectionIndices[sec.groupID];
+                }
+                else {
+                    var.targetSectionIndices.push_back(i);
                 }
 
-                remove(targetSections, courseID, instructorID, "", slot, course.duration);
+                var.totalStudents = 0;
+                for (int idx : var.targetSectionIndices) var.totalStudents += sections[idx].studentCount;
+
+                var.availableInstructorsCount = 0;
+
+                variables.push_back(var);
+                processedGroupCourses.insert(groupKey);
             }
             else {
-                for (auto room : rooms) {
-                    roomsChecked++;
+                CSPVariable var;
+                var.id = varIdCounter++;
+                var.courseID = cID;
+                var.targetSectionIndices.push_back(i);
+                var.totalStudents = sec.studentCount;
+                var.duration = c.duration;
+                var.isHardConstraint = false;
 
-                    if (room.type != course.type) continue;
-
-                    if (course.type == "Lab" && !course.labType.empty()) {
-                        if (room.labType != course.labType) {
-                            continue;
-                        }
-                    }
-
-                    if (!course.allYear && room.capacity < totalStudents) continue;
-
-                    validSlotsChecked++;
-
-                    if (!valid(targetSections, slot, course.duration, instructorID, room.roomID, courseID)) {
-                        continue;
-                    }
-
-                    attemptMade = true;
-                    totalAttempts++;
-
-                    place(targetSections, courseID, course.type, course.duration, instructorID, room.roomID, slot);
-
-                    if (solve(sectionIdx)) {
-                        recursionDepth--;
-                        return true;
-                    }
-
-                    remove(targetSections, courseID, instructorID, room.roomID, slot, course.duration);
-                }
+                variables.push_back(var);
             }
         }
     }
 
-    string sectionInfo = targetSections.size() > 1 ?
-        to_string(targetSections.size()) + " sections" :
-        "section " + sections[sectionIdx].sectionID;
+    sort(variables.begin(), variables.end(), [](const CSPVariable& a, const CSPVariable& b) {
+        if (a.isHardConstraint != b.isHardConstraint) return a.isHardConstraint > b.isHardConstraint;
 
-    string errorMsg;
+        if (a.duration != b.duration) return a.duration > b.duration;
 
-    if (!attemptMade) {
-        if (courseID == "GRAD1" || courseID == "GRAD2") {
-            int availableSlots = countAvailableConsecutiveSlots(targetSections[0], course.duration);
+        if (a.totalStudents != b.totalStudents) return a.totalStudents > b.totalStudents;
 
-            errorMsg = "ROOT CAUSE: GRAD course '" + course.courseName +
-                "' (" + courseID + ") cannot fit in " + sectionInfo +
-                "\n  Required: " + to_string(course.duration) + " consecutive slots" +
-                "\n  Available consecutive slots: " + to_string(availableSlots) +
-                "\n  This means previous courses consumed too many slots." +
-                "\n  Solution: Reduce GRAD duration to " + to_string(availableSlots > 0 ? availableSlots : course.duration / 2);
+        return a.targetSectionIndices.size() > b.targetSectionIndices.size();
+        });
+
+    return variables;
+}
+
+bool solveIterative() {
+    vector<CSPVariable> variables = identifyVariables();
+    int n = variables.size();
+
+    if (n == 0) return true;
+
+    vector<vector<CSPValue>> domains(n);
+    vector<int> domainIndices(n, -1);
+    int depth = 0;
+
+    domains[0] = generateDomain(variables[0]);
+
+    while (depth >= 0 && depth < n) {
+        auto currentTime = chrono::steady_clock::now();
+        if (chrono::duration_cast<chrono::seconds>(currentTime - startTime).count() > 60) {
+            lastError = "Timeout limit reached.";
+            return false;
+        }
+
+        iterationCount++;
+        if (iterationCount > MAX_ITERATIONS) {
+            lastError = "Max iterations reached.";
+            return false;
+        }
+
+        bool foundAssignment = false;
+
+        while (true) {
+            domainIndices[depth]++;
+
+            if (domainIndices[depth] >= domains[depth].size()) {
+                break;
+            }
+
+            CSPValue& val = domains[depth][domainIndices[depth]];
+
+            applyMove(variables[depth], val);
+            foundAssignment = true;
+            break;
+        }
+
+        if (foundAssignment) {
+            depth++;
+            if (depth < n) {
+                domains[depth] = generateDomain(variables[depth]);
+                domainIndices[depth] = -1;
+
+                if (domains[depth].empty()) {
+                    if (depth > 0) {
+                    }
+                }
+            }
         }
         else {
-            errorMsg = "ROOT CAUSE: No suitable room/slot for '" + course.courseName +
-                "' (" + courseID + ") in " + sectionInfo;
-
-            errorMsg += "\n  Details:";
-            errorMsg += "\n    - Type: " + course.type;
-            errorMsg += "\n    - Duration: " + to_string(course.duration) + " slots";
-            errorMsg += "\n    - Students: " + to_string(totalStudents);
-            if (!course.labType.empty()) {
-                errorMsg += "\n    - Lab Type Required: " + course.labType;
+            if (lastError == "") {
+                lastError = "Unable to schedule " + getCourse[variables[depth].courseID].courseName +
+                    " (Depth " + to_string(depth) + ")";
             }
 
-            int suitableRoomCount = 0;
-            for (auto& room : rooms) {
-                if (room.type == course.type) {
-                    if (course.allYear || room.capacity >= totalStudents) {
-                        if (course.labType.empty() || room.labType == course.labType) {
-                            suitableRoomCount++;
-                        }
-                    }
-                }
+            domains[depth].clear();
+
+            depth--;
+
+            if (depth >= 0) {
+                CSPValue& prevVal = domains[depth][domainIndices[depth]];
+                undoMove(variables[depth], prevVal);
             }
-
-            errorMsg += "\n    - Suitable rooms: " + to_string(suitableRoomCount);
-            errorMsg += "\n  Cause: All suitable rooms/slots blocked by other courses";
         }
-
-        lastError = errorMsg;
-        if (recursionDepth > deepestFailureDepth) {
-            deepestError = errorMsg;
-            deepestFailureDepth = recursionDepth;
-        }
-
-        FailureInfo failure;
-        failure.courseID = courseID;
-        failure.courseName = course.courseName;
-        failure.sectionID = sections[sectionIdx].sectionID;
-        failure.reason = errorMsg;
-        failure.depth = recursionDepth;
-        failure.slotsAvailable = validSlotsChecked;
-        failure.roomsAvailable = roomsChecked;
-        recordFailure(failure);
-
-    }
-    else {
-        errorMsg = "Backtracking from: " + course.courseName +
-            " (" + courseID + ") in " + sectionInfo +
-            "\n  This course tried " + to_string(totalAttempts) + " valid placements" +
-            "\n  But each placement led to failure in subsequent courses" +
-            "\n  See 'rootCause' for the actual problem";
-
-        lastError = errorMsg;
-
-        FailureInfo failure;
-        failure.courseID = courseID;
-        failure.courseName = course.courseName;
-        failure.sectionID = sections[sectionIdx].sectionID;
-        failure.reason = "Backtracking - all placements led to deeper failures";
-        failure.depth = recursionDepth;
-        failure.slotsAvailable = totalAttempts;
-        recordFailure(failure);
     }
 
-    recursionDepth--;
-    return false;
+    return (depth == n);
 }
 
 void clearData() {
@@ -588,14 +411,12 @@ void clearData() {
     tas.clear();
     rooms.clear();
     sections.clear();
-    groups.clear();
     getCourse.clear();
     sectionToIndex.clear();
-    sectionToGroup.clear();
-    groupToSections.clear();
-    yearToSections.clear();
-    scheduledCourses.clear();
+    groupToSectionIndices.clear();
+
     Timetable.clear();
+    sectionScheduledCourses.clear();
 
     for (int i = 0; i < SLOTS_MAX; i++) {
         instructorBusy[i].clear();
@@ -603,12 +424,7 @@ void clearData() {
     }
 
     lastError = "";
-    firstError = "";
-    deepestError = "";
-    maxDepthReached = 0;
-    deepestFailureDepth = 0;
-    recursionDepth = 0;
-    failureHistory.clear();
+    iterationCount = 0;
 }
 
 void parseInputData(const json& inputData) {
@@ -619,20 +435,11 @@ void parseInputData(const json& inputData) {
             Course course;
             course.courseID = c.value("courseID", "");
             course.courseName = c.value("courseName", "");
-
             string type = c.value("type", "");
-            if (type == "lec" || type == "Lec" || type == "lecture" || type == "Lecture") {
-                course.type = "Lecture";
-            }
-            else if (type == "tut" || type == "Tut" || type == "tutorial" || type == "Tutorial") {
-                course.type = "Tutorial";
-            }
-            else if (type == "lab" || type == "Lab") {
-                course.type = "Lab";
-            }
-            else {
-                course.type = type;
-            }
+            if (type == "lec" || type == "Lec" || type == "lecture") course.type = "Lecture";
+            else if (type == "tut" || type == "Tut" || type == "tutorial") course.type = "Tutorial";
+            else if (type == "lab" || type == "Lab") course.type = "Lab";
+            else course.type = type;
 
             course.labType = c.value("labType", "");
             course.allYear = c.value("allYear", false);
@@ -647,9 +454,8 @@ void parseInputData(const json& inputData) {
             Instructor instructor;
             instructor.instructorID = i.value("instructorID", "");
             instructor.name = i.value("name", "");
-            if (i.contains("qualifiedCourses") && i["qualifiedCourses"].is_array()) {
-                instructor.qualifiedCourses = i["qualifiedCourses"].get<vector<string>>();
-            }
+            if (i.contains("qualifiedCourses")) instructor.qualifiedCourses = i["qualifiedCourses"].get<vector<string>>();
+            if (i.contains("unavailableTimeSlots")) instructor.unavailableTimeSlots = i["unavailableTimeSlots"].get<vector<int>>();
             instructors.push_back(instructor);
         }
     }
@@ -659,9 +465,8 @@ void parseInputData(const json& inputData) {
             TA ta;
             ta.taID = t.value("taID", "");
             ta.name = t.value("name", "");
-            if (t.contains("qualifiedCourses") && t["qualifiedCourses"].is_array()) {
-                ta.qualifiedCourses = t["qualifiedCourses"].get<vector<string>>();
-            }
+            if (t.contains("qualifiedCourses")) ta.qualifiedCourses = t["qualifiedCourses"].get<vector<string>>();
+            if (t.contains("unavailableTimeSlots")) ta.unavailableTimeSlots = t["unavailableTimeSlots"].get<vector<int>>();
             tas.push_back(ta);
         }
     }
@@ -670,41 +475,15 @@ void parseInputData(const json& inputData) {
         for (auto r : inputData["rooms"]) {
             Room room;
             room.roomID = r.value("roomID", "");
-
             string type = r.value("type", "");
-            if (type == "lec" || type == "lecture" || type == "Lecture") {
-                room.type = "Lecture";
-            }
-            else if (type == "tut" || type == "tutorial" || type == "Tutorial") {
-                room.type = "Tutorial";
-            }
-            else if (type == "lab" || type == "Lab") {
-                room.type = "Lab";
-            }
-            else {
-                room.type = type;
-            }
+            if (type == "lec" || type == "lecture") room.type = "Lecture";
+            else if (type == "tut" || type == "tutorial") room.type = "Tutorial";
+            else if (type == "lab" || type == "Lab") room.type = "Lab";
+            else room.type = type;
 
             room.labType = r.value("labType", "");
             room.capacity = r.value("capacity", 0);
             rooms.push_back(room);
-        }
-    }
-
-    if (inputData.contains("groups")) {
-        for (auto g : inputData["groups"]) {
-            Group group;
-            group.groupID = g.value("groupID", "");
-            group.year = g.value("year", 1);
-            if (g.contains("sections") && g["sections"].is_array()) {
-                group.sections = g["sections"].get<vector<string>>();
-            }
-            groups.push_back(group);
-
-            for (auto sec : group.sections) {
-                sectionToGroup[sec] = group.groupID;
-                groupToSections[group.groupID].push_back(sec);
-            }
         }
     }
 
@@ -716,31 +495,25 @@ void parseInputData(const json& inputData) {
             section.groupID = s.value("groupID", "");
             section.year = s.value("year", 1);
             section.studentCount = s.value("studentCount", 0);
-
-            if (s.contains("assignedCourses") && s["assignedCourses"].is_array()) {
-                section.assignedCourses = s["assignedCourses"].get<vector<string>>();
-            }
-            else if (s.contains("courses") && s["courses"].is_array()) {
-                section.assignedCourses = s["courses"].get<vector<string>>();
-            }
+            if (s.contains("assignedCourses")) section.assignedCourses = s["assignedCourses"].get<vector<string>>();
+            else if (s.contains("courses")) section.assignedCourses = s["courses"].get<vector<string>>();
 
             sections.push_back(section);
             sectionToIndex[section.sectionID] = idx;
-            yearToSections[section.year].push_back(section.sectionID);
+            groupToSectionIndices[section.groupID].push_back(idx);
             idx++;
         }
     }
 
     SECTIONS_MAX = sections.size();
     Timetable.resize(SLOTS_MAX, vector<Slot>(SECTIONS_MAX, Slot()));
-    scheduledCourses.resize(SECTIONS_MAX, unordered_set<string>());
+    sectionScheduledCourses.resize(SECTIONS_MAX);
 }
 
 json timetableToJson() {
     json result;
     result["success"] = true;
     result["slotsMax"] = SLOTS_MAX;
-    result["sectionsMax"] = SECTIONS_MAX;
 
     json sectionsSchedule = json::array();
 
@@ -748,8 +521,6 @@ json timetableToJson() {
         json sectionData;
         sectionData["sectionID"] = sections[j].sectionID;
         sectionData["groupID"] = sections[j].groupID;
-        sectionData["year"] = sections[j].year;
-        sectionData["studentCount"] = sections[j].studentCount;
 
         json schedule = json::array();
 
@@ -771,11 +542,9 @@ json timetableToJson() {
                 else {
                     slot["slotRange"] = to_string(i);
                 }
-
                 schedule.push_back(slot);
             }
         }
-
         sectionData["schedule"] = schedule;
         sectionsSchedule.push_back(sectionData);
     }
@@ -790,26 +559,14 @@ int main() {
     svr.Post("/api/schedule", [](const Request& req, Response& res) {
         try {
             json inputData = json::parse(req.body);
-
             parseInputData(inputData);
 
             startTime = chrono::steady_clock::now();
-            recursionDepth = 0;
-            maxDepthReached = 0;
-            deepestFailureDepth = 0;
-            lastError = "";
-            firstError = "";
-            deepestError = "";
-            failureHistory.clear();
 
-            cout << "Starting scheduling process..." << endl;
-            cout << "Sections: " << sections.size() << endl;
-            cout << "Courses: " << courses.size() << endl;
-            cout << "Instructors: " << instructors.size() << endl;
-            cout << "TAs: " << tas.size() << endl;
-            cout << "Rooms: " << rooms.size() << endl;
+            cout << "Starting Iterative CSP Solver..." << endl;
+            cout << "Variables to schedule: " << sections.size() << " sections (raw)" << endl;
 
-            bool success = solve(0);
+            bool success = solveIterative();
 
             auto endTime = chrono::steady_clock::now();
             auto duration = chrono::duration_cast<chrono::milliseconds>(endTime - startTime).count();
@@ -817,139 +574,32 @@ int main() {
             json response;
             if (success) {
                 response = timetableToJson();
-                cout << "SUCCESS: Valid timetable generated in " << duration << "ms" << endl;
+                cout << "SUCCESS: Timetable generated in " << duration << "ms (" << iterationCount << " iterations)" << endl;
             }
             else {
                 response["success"] = false;
-
-                string rootCause = deepestError.empty() ? lastError : deepestError;
-                if (rootCause.empty()) {
-                    rootCause = "No valid solution found";
-                }
-
-                response["error"] = rootCause;
-                response["rootCause"] = deepestError;
-                response["lastAttempt"] = lastError;
-
-                cout << "FAILED after " << duration << "ms" << endl;
-                cout << "ROOT CAUSE (deepest failure):\n" << deepestError << endl;
-                cout << "Last backtracking from:\n" << lastError << endl;
-
-                json failureChain = json::array();
-                for (auto& failure : failureHistory) {
-                    json failInfo;
-                    failInfo["courseID"] = failure.courseID;
-                    failInfo["courseName"] = failure.courseName;
-                    failInfo["sectionID"] = failure.sectionID;
-                    failInfo["reason"] = failure.reason;
-                    failInfo["recursionDepth"] = failure.depth;
-                    if (failure.slotsAvailable > 0) {
-                        failInfo["attemptsOrSlots"] = failure.slotsAvailable;
-                    }
-                    failureChain.push_back(failInfo);
-                }
-                response["failureChain"] = failureChain;
-
-                response["diagnostics"] = json::object();
-                response["diagnostics"]["totalSections"] = sections.size();
-                response["diagnostics"]["totalCourses"] = courses.size();
-                response["diagnostics"]["totalInstructors"] = instructors.size();
-                response["diagnostics"]["totalTAs"] = tas.size();
-                response["diagnostics"]["totalRooms"] = rooms.size();
-                response["diagnostics"]["maxSlots"] = SLOTS_MAX;
-                response["diagnostics"]["timeTakenMs"] = duration;
-                response["diagnostics"]["maxRecursionDepth"] = maxDepthReached;
-                response["diagnostics"]["deepestFailureDepth"] = deepestFailureDepth;
-
-                int totalCoursesRequired = 0;
-                int totalCoursesScheduled = 0;
-
-                json partialSchedule = json::array();
-                for (size_t j = 0; j < sections.size(); j++) {
-                    totalCoursesRequired += sections[j].assignedCourses.size();
-                    totalCoursesScheduled += scheduledCourses[j].size();
-
-                    if (sections[j].assignedCourses.size() > scheduledCourses[j].size()) {
-                        json sectionInfo;
-                        sectionInfo["sectionID"] = sections[j].sectionID;
-
-                        json unscheduled = json::array();
-                        for (const auto& courseID : sections[j].assignedCourses) {
-                            if (scheduledCourses[j].find(courseID) == scheduledCourses[j].end()) {
-                                json courseInfo;
-                                courseInfo["courseID"] = courseID;
-                                if (getCourse.find(courseID) != getCourse.end()) {
-                                    courseInfo["courseName"] = getCourse[courseID].courseName;
-                                    courseInfo["duration"] = getCourse[courseID].duration;
-                                    courseInfo["type"] = getCourse[courseID].type;
-                                }
-                                unscheduled.push_back(courseInfo);
-                            }
-                        }
-                        sectionInfo["unscheduledCourses"] = unscheduled;
-                        sectionInfo["totalScheduled"] = scheduledCourses[j].size();
-                        sectionInfo["totalRequired"] = sections[j].assignedCourses.size();
-
-                        partialSchedule.push_back(sectionInfo);
-                    }
-                }
-
-                response["diagnostics"]["totalCoursesRequired"] = totalCoursesRequired;
-                response["diagnostics"]["totalCoursesScheduled"] = totalCoursesScheduled;
-                response["diagnostics"]["schedulingProgress"] = totalCoursesRequired > 0 ?
-                    (totalCoursesScheduled * 100.0 / totalCoursesRequired) : 0;
-
-                if (!partialSchedule.empty()) {
-                    response["diagnostics"]["sectionsWithUnscheduledCourses"] = partialSchedule;
-                }
-
-                json suggestions = json::array();
-
-                if (deepestError.find("GRAD") != string::npos &&
-                    (deepestError.find("cannot fit") != string::npos || deepestError.find("consecutive slots: 0") != string::npos)) {
-                    suggestions.push_back("CRITICAL: GRAD course is the root problem!");
-
-                    for (auto& course : courses) {
-                        if (course.courseID == "GRAD1" || course.courseID == "GRAD2") {
-                            suggestions.push_back("  → " + course.courseName + " requires " + to_string(course.duration) +
-                                " consecutive slots but none are available");
-                            suggestions.push_back("  → Solution: Reduce duration to " + to_string(min(4, course.duration / 2)) +
-                                " or add " + to_string(course.duration - SLOTS_MAX / 2) + " more slots");
-                        }
-                    }
-                }
-
-                if (deepestError.find("No qualified instructor") != string::npos) {
-                    suggestions.push_back("Add qualified instructors/TAs for the mentioned course");
-                }
-
-                if (!suggestions.empty()) {
-                    response["suggestions"] = suggestions;
-                }
+                response["error"] = lastError.empty() ? "No valid solution found." : lastError;
+                response["iterations"] = iterationCount;
+                cout << "FAILED: " << lastError << endl;
             }
+
+            response["diagnostics"]["timeTakenMs"] = duration;
+            response["diagnostics"]["iterations"] = iterationCount;
 
             res.set_content(response.dump(2), "application/json");
             res.set_header("Access-Control-Allow-Origin", "*");
             res.status = success ? 200 : 400;
 
         }
-        catch (const json::parse_error& e) {
-            json errorResponse;
-            errorResponse["success"] = false;
-            errorResponse["error"] = string("Invalid JSON: ") + e.what();
-            res.set_content(errorResponse.dump(2), "application/json");
-            res.set_header("Access-Control-Allow-Origin", "*");
-            res.status = 400;
-        }
         catch (const exception& e) {
             json errorResponse;
             errorResponse["success"] = false;
             errorResponse["error"] = string("Server error: ") + e.what();
-            res.set_content(errorResponse.dump(2), "application/json");
-            res.set_header("Access-Control-Allow-Origin", "*");
+            res.set_content(errorResponse.dump(), "application/json");
             res.status = 500;
         }
         });
+
 
     svr.Options("/api/schedule", [](const Request& req, Response& res) {
         res.set_header("Access-Control-Allow-Origin", "*");
@@ -958,10 +608,7 @@ int main() {
         res.status = 204;
         });
 
-    cout << "Timetable Scheduling API Server" << endl;
-    cout << "Server: http://localhost:8080" << endl;
-    cout << "Endpoint: POST /api/schedule" << endl;
-
+    cout << "CSP Timetable Server running at http://0.0.0.0:8080" << endl;
     svr.listen("0.0.0.0", 8080);
 
     return 0;

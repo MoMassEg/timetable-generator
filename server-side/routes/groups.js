@@ -1,9 +1,7 @@
-// routes/groupRoutes.js
 const express = require("express");
 const Group = require("../models/Group.js");
 const router = express.Router();
 
-// Get all groups for a specific timetable
 router.get("/:timetableID", async (req, res) => {
   try {
     const groups = await Group.find({ timetableID: req.params.timetableID });
@@ -13,7 +11,6 @@ router.get("/:timetableID", async (req, res) => {
   }
 });
 
-// Get group by ID
 router.get("/group/:id", async (req, res) => {
   try {
     const group = await Group.findById(req.params.id);
@@ -24,7 +21,6 @@ router.get("/group/:id", async (req, res) => {
   }
 });
 
-// Create group
 router.post("/", async (req, res) => {
   try {
     const { groupID, yearID, timetableID } = req.body;
@@ -41,7 +37,6 @@ router.post("/", async (req, res) => {
   }
 });
 
-// Update group
 router.put("/:id", async (req, res) => {
   try {
     const updatedGroup = await Group.findByIdAndUpdate(req.params.id, req.body, { new: true });
@@ -52,7 +47,6 @@ router.put("/:id", async (req, res) => {
   }
 });
 
-// Delete group
 router.delete("/:id", async (req, res) => {
   try {
     const deleted = await Group.findByIdAndDelete(req.params.id);
