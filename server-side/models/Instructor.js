@@ -1,4 +1,3 @@
-// models/Instructor.js
 const mongoose = require('mongoose');
 
 const instructorSchema = new mongoose.Schema({

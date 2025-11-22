@@ -8,12 +8,36 @@
 #include <algorithm>
 #include <iomanip>
 #include <sstream>
+#include <chrono>
 
 using json = nlohmann::json;
 using namespace httplib;
 using namespace std;
 
 #define all(x) (x).begin(),(x).end()
+
+string lastError = "";
+string firstError = "";
+string deepestError = ""; 
+int maxDepthReached = 0;
+int deepestFailureDepth = 0;
+int recursionDepth = 0;
+const int MAX_RECURSION_DEPTH = 100000;
+auto startTime = chrono::steady_clock::now();
+const int MAX_SOLVE_TIME_SECONDS = 60;
+
+struct FailureInfo {
+    string courseID;
+    string courseName;
+    string sectionID;
+    string reason;
+    int depth;
+    int slotsAvailable;
+    int roomsAvailable;
+};
+
+vector<FailureInfo> failureHistory;
+const int MAX_FAILURE_HISTORY = 10;
 
 struct Course {
     string courseID, courseName, type;
@@ -127,14 +151,10 @@ string getInstructorName(string instructorID) {
 }
 
 bool valid(vector<int>& targetSections, int slot, int duration, string instructorID, string roomID, string courseID) {
-    //cout << "duration" << endl;
     if (duration > 1 && slot % duration != 0) return false;
-    //cout << "slot" << endl;
     if (slot < 0 || slot >= SLOTS_MAX) return false;
-    //cout << "slot+duration" << endl;
     if (slot + duration > SLOTS_MAX) return false;
 
-    //cout << "TargetSections" << endl;
     for (int sec : targetSections) {
         if (sec < 0 || sec >= SECTIONS_MAX) return false;
 
@@ -143,18 +163,15 @@ bool valid(vector<int>& targetSections, int slot, int duration, string instructo
         }
     }
 
-    //cout << "instructor" << endl;
     for (int s = slot; s < slot + duration; s++) {
         if (instructorBusy[s].find(instructorID) != instructorBusy[s].end()) return false;
     }
 
-    //cout << "room" << endl;
     if (courseID != "GRAD1" && courseID != "GRAD2")
         for (int s = slot; s < slot + duration; s++) {
             if (roomBusy[s].find(roomID) != roomBusy[s].end()) return false;
         }
 
-    //cout << "true" << endl;
     return true;
 }
 
@@ -205,12 +222,68 @@ void remove(vector<int>& targetSections, string courseID, string instructorID, s
     }
 }
 
+void recordFailure(const FailureInfo& failure) {
+    if (failureHistory.size() >= MAX_FAILURE_HISTORY) {
+        failureHistory.erase(failureHistory.begin());
+    }
+    failureHistory.push_back(failure);
+
+    if (failure.depth > deepestFailureDepth) {
+        deepestFailureDepth = failure.depth;
+        deepestError = failure.reason;
+    }
+}
+
+int countAvailableConsecutiveSlots(int sectionIdx, int duration) {
+    int count = 0;
+    for (int slot = 0; slot <= SLOTS_MAX - duration; slot++) {
+        bool available = true;
+        for (int s = slot; s < slot + duration; s++) {
+            if (Timetable[s][sectionIdx].istaken) {
+                available = false;
+                break;
+            }
+        }
+        if (available) count++;
+    }
+    return count;
+}
+
 bool solve(int sectionIdx) {
+
+    auto currentTime = chrono::steady_clock::now();
+    auto elapsed = chrono::duration_cast<chrono::seconds>(currentTime - startTime).count();
+    if (elapsed > MAX_SOLVE_TIME_SECONDS) {
+        string error = "Timeout: Could not find solution within " + to_string(MAX_SOLVE_TIME_SECONDS) + " seconds.";
+        lastError = error;
+        if (recursionDepth > deepestFailureDepth) {
+            deepestError = error;
+            deepestFailureDepth = recursionDepth;
+        }
+        return false;
+    }
+
+    recursionDepth++;
+    if (recursionDepth > maxDepthReached) {
+        maxDepthReached = recursionDepth;
+    }
+
+    if (recursionDepth > MAX_RECURSION_DEPTH) {
+        string error = "Maximum recursion depth exceeded.";
+        lastError = error;
+        if (recursionDepth > deepestFailureDepth) {
+            deepestError = error;
+            deepestFailureDepth = recursionDepth;
+        }
+        recursionDepth--;
+        return false;
+    }
+
     if (sectionIdx >= sections.size()) {
+        recursionDepth--;
         return true;
     }
 
-    //cout << "startsolve" << endl;
     vector<string>& coursesToSchedule = sections[sectionIdx].assignedCourses;
     bool allScheduled = true;
     for (auto courseID : coursesToSchedule) {
@@ -221,10 +294,10 @@ bool solve(int sectionIdx) {
     }
 
     if (allScheduled) {
-        return solve(sectionIdx + 1);
+        bool result = solve(sectionIdx + 1);
+        recursionDepth--;
+        return result;
     }
-
-    
 
     string courseID = "";
     for (auto cid : coursesToSchedule) {
@@ -233,15 +306,29 @@ bool solve(int sectionIdx) {
             break;
         }
     }
+
     if (getCourse.find(courseID) == getCourse.end()) {
-        //cout <<"didn't find " << courseID << endl;
+        string error = "Course not found: " + courseID + " (section: " + sections[sectionIdx].sectionID + ")";
+        lastError = error;
+        if (recursionDepth > deepestFailureDepth) {
+            deepestError = error;
+            deepestFailureDepth = recursionDepth;
+        }
+
+        FailureInfo failure;
+        failure.courseID = courseID;
+        failure.courseName = "UNKNOWN";
+        failure.sectionID = sections[sectionIdx].sectionID;
+        failure.reason = "Course definition not found";
+        failure.depth = recursionDepth;
+        recordFailure(failure);
+
+        recursionDepth--;
         return false;
     }
 
     Course course = getCourse[courseID];
     vector<int> targetSections;
-    //cout << course.courseName << endl;
-   
 
     vector<string> candidateSections;
     string groupID = sections[sectionIdx].groupID;
@@ -261,16 +348,15 @@ bool solve(int sectionIdx) {
         targetSections.push_back(sectionIdx);
     }
 
-    
-
     if (course.allYear || course.type == "Lecture") {
-
         bool currentSectionNeedsCourse = find(all(sections[sectionIdx].assignedCourses), courseID)
             != sections[sectionIdx].assignedCourses.end();
-        
+
         if (!currentSectionNeedsCourse) {
             scheduledCourses[sectionIdx].insert(courseID);
-            return solve(sectionIdx);
+            bool result = solve(sectionIdx);
+            recursionDepth--;
+            return result;
         }
 
         bool allScheduled = true;
@@ -290,11 +376,12 @@ bool solve(int sectionIdx) {
                 }
             }
         }
-       
-      
+
         if (allScheduled) {
             scheduledCourses[sectionIdx].insert(courseID);
-            return solve(sectionIdx);
+            bool result = solve(sectionIdx);
+            recursionDepth--;
+            return result;
         }
 
         for (auto& secID : candidateSections) {
@@ -311,46 +398,65 @@ bool solve(int sectionIdx) {
 
         if (targetSections.empty()) {
             scheduledCourses[sectionIdx].insert(courseID);
-            return solve(sectionIdx);
+            bool result = solve(sectionIdx);
+            recursionDepth--;
+            return result;
         }
     }
-   
+
     int totalStudents = getTotalStudents(targetSections);
-    //cout << "target" << endl;
+
     vector<string> candidates;
     for (auto inst : instructors) {
         if (isQualified(inst.instructorID, courseID, false)) {
             candidates.push_back(inst.instructorID);
         }
     }
-    
+
     for (auto ta : tas) {
         if (isQualified(ta.taID, courseID, true)) {
             candidates.push_back(ta.taID);
         }
     }
-    
 
     if (candidates.empty()) {
-        //cout << course.courseName << " NO TA" << endl;
+        string error = "ROOT CAUSE: No qualified instructor/TA for: " + course.courseName + " (" + courseID + ")";
+        lastError = error;
+        if (recursionDepth > deepestFailureDepth) {
+            deepestError = error;
+            deepestFailureDepth = recursionDepth;
+        }
+
+        FailureInfo failure;
+        failure.courseID = courseID;
+        failure.courseName = course.courseName;
+        failure.sectionID = sections[sectionIdx].sectionID;
+        failure.reason = "No qualified instructor or TA";
+        failure.depth = recursionDepth;
+        recordFailure(failure);
+
+        recursionDepth--;
         return false;
     }
-    //cout << "cand" << endl;
 
-    bool flag = true;
-    
+    bool attemptMade = false;
+    int validSlotsChecked = 0;
+    int roomsChecked = 0;
+    int totalAttempts = 0;
 
     for (int slot = 0; slot < SLOTS_MAX; slot++) {
         for (auto instructorID : candidates) {
             if (courseID == "GRAD1" || courseID == "GRAD2") {
-                //cout << "GRAD1" << " " << targetSections[0]<<" "<<slot << endl;
                 if (!valid(targetSections, slot, course.duration, instructorID, "", courseID)) {
                     continue;
                 }
-                flag = false;
+                attemptMade = true;
+                totalAttempts++;
+
                 place(targetSections, courseID, course.type, course.duration, instructorID, "", slot);
 
                 if (solve(sectionIdx)) {
+                    recursionDepth--;
                     return true;
                 }
 
@@ -358,6 +464,8 @@ bool solve(int sectionIdx) {
             }
             else {
                 for (auto room : rooms) {
+                    roomsChecked++;
+
                     if (room.type != course.type) continue;
 
                     if (course.type == "Lab" && !course.labType.empty()) {
@@ -368,14 +476,19 @@ bool solve(int sectionIdx) {
 
                     if (!course.allYear && room.capacity < totalStudents) continue;
 
+                    validSlotsChecked++;
+
                     if (!valid(targetSections, slot, course.duration, instructorID, room.roomID, courseID)) {
                         continue;
                     }
 
-                    flag = false;
+                    attemptMade = true;
+                    totalAttempts++;
+
                     place(targetSections, courseID, course.type, course.duration, instructorID, room.roomID, slot);
 
                     if (solve(sectionIdx)) {
+                        recursionDepth--;
                         return true;
                     }
 
@@ -384,14 +497,88 @@ bool solve(int sectionIdx) {
             }
         }
     }
-    
 
-    if (flag) {
-        //cout << course.courseName << " NO ROOM" << endl;
-        return false;
+    string sectionInfo = targetSections.size() > 1 ?
+        to_string(targetSections.size()) + " sections" :
+        "section " + sections[sectionIdx].sectionID;
+
+    string errorMsg;
+
+    if (!attemptMade) {
+        if (courseID == "GRAD1" || courseID == "GRAD2") {
+            int availableSlots = countAvailableConsecutiveSlots(targetSections[0], course.duration);
+
+            errorMsg = "ROOT CAUSE: GRAD course '" + course.courseName +
+                "' (" + courseID + ") cannot fit in " + sectionInfo +
+                "\n  Required: " + to_string(course.duration) + " consecutive slots" +
+                "\n  Available consecutive slots: " + to_string(availableSlots) +
+                "\n  This means previous courses consumed too many slots." +
+                "\n  Solution: Reduce GRAD duration to " + to_string(availableSlots > 0 ? availableSlots : course.duration / 2);
+        }
+        else {
+            errorMsg = "ROOT CAUSE: No suitable room/slot for '" + course.courseName +
+                "' (" + courseID + ") in " + sectionInfo;
+
+            errorMsg += "\n  Details:";
+            errorMsg += "\n    - Type: " + course.type;
+            errorMsg += "\n    - Duration: " + to_string(course.duration) + " slots";
+            errorMsg += "\n    - Students: " + to_string(totalStudents);
+            if (!course.labType.empty()) {
+                errorMsg += "\n    - Lab Type Required: " + course.labType;
+            }
+
+            int suitableRoomCount = 0;
+            for (auto& room : rooms) {
+                if (room.type == course.type) {
+                    if (course.allYear || room.capacity >= totalStudents) {
+                        if (course.labType.empty() || room.labType == course.labType) {
+                            suitableRoomCount++;
+                        }
+                    }
+                }
+            }
+
+            errorMsg += "\n    - Suitable rooms: " + to_string(suitableRoomCount);
+            errorMsg += "\n  Cause: All suitable rooms/slots blocked by other courses";
+        }
+
+        lastError = errorMsg;
+        if (recursionDepth > deepestFailureDepth) {
+            deepestError = errorMsg;
+            deepestFailureDepth = recursionDepth;
+        }
+
+        FailureInfo failure;
+        failure.courseID = courseID;
+        failure.courseName = course.courseName;
+        failure.sectionID = sections[sectionIdx].sectionID;
+        failure.reason = errorMsg;
+        failure.depth = recursionDepth;
+        failure.slotsAvailable = validSlotsChecked;
+        failure.roomsAvailable = roomsChecked;
+        recordFailure(failure);
+
     }
-    //cout << "Room" << endl;
+    else {
+        errorMsg = "Backtracking from: " + course.courseName +
+            " (" + courseID + ") in " + sectionInfo +
+            "\n  This course tried " + to_string(totalAttempts) + " valid placements" +
+            "\n  But each placement led to failure in subsequent courses" +
+            "\n  See 'rootCause' for the actual problem";
 
+        lastError = errorMsg;
+
+        FailureInfo failure;
+        failure.courseID = courseID;
+        failure.courseName = course.courseName;
+        failure.sectionID = sections[sectionIdx].sectionID;
+        failure.reason = "Backtracking - all placements led to deeper failures";
+        failure.depth = recursionDepth;
+        failure.slotsAvailable = totalAttempts;
+        recordFailure(failure);
+    }
+
+    recursionDepth--;
     return false;
 }
 
@@ -414,6 +601,14 @@ void clearData() {
         instructorBusy[i].clear();
         roomBusy[i].clear();
     }
+
+    lastError = "";
+    firstError = "";
+    deepestError = "";
+    maxDepthReached = 0;
+    deepestFailureDepth = 0;
+    recursionDepth = 0;
+    failureHistory.clear();
 }
 
 void parseInputData(const json& inputData) {
@@ -440,13 +635,10 @@ void parseInputData(const json& inputData) {
             }
 
             course.labType = c.value("labType", "");
-
             course.allYear = c.value("allYear", false);
-
             course.duration = c.value("duration", 1);
             courses.push_back(course);
             getCourse[course.courseID] = course;
-
         }
     }
 
@@ -494,10 +686,8 @@ void parseInputData(const json& inputData) {
             }
 
             room.labType = r.value("labType", "");
-
             room.capacity = r.value("capacity", 0);
             rooms.push_back(room);
-
         }
     }
 
@@ -535,11 +725,8 @@ void parseInputData(const json& inputData) {
             }
 
             sections.push_back(section);
-
             sectionToIndex[section.sectionID] = idx;
-
             yearToSections[section.year].push_back(section.sectionID);
-
             idx++;
         }
     }
@@ -573,14 +760,13 @@ json timetableToJson() {
                 slot["courseID"] = Timetable[i][j].courseID;
                 slot["courseName"] = getCourse[Timetable[i][j].courseID].courseName;
                 slot["type"] = Timetable[i][j].type;
-
                 slot["roomID"] = Timetable[i][j].roomID;
                 slot["instructorID"] = Timetable[i][j].instructorID;
                 slot["instructorName"] = getInstructorName(Timetable[i][j].instructorID);
                 slot["duration"] = Timetable[i][j].duration;
 
-                if (Timetable[i][j].duration == 2) {
-                    slot["slotRange"] = to_string(i) + "-" + to_string(i + 1);
+                if (Timetable[i][j].duration > 1) {
+                    slot["slotRange"] = to_string(i) + "-" + to_string(i + Timetable[i][j].duration - 1);
                 }
                 else {
                     slot["slotRange"] = to_string(i);
@@ -602,25 +788,167 @@ int main() {
     Server svr;
 
     svr.Post("/api/schedule", [](const Request& req, Response& res) {
-        json inputData = json::parse(req.body);
+        try {
+            json inputData = json::parse(req.body);
 
-        parseInputData(inputData);
+            parseInputData(inputData);
 
-        bool success = solve(0);
+            startTime = chrono::steady_clock::now();
+            recursionDepth = 0;
+            maxDepthReached = 0;
+            deepestFailureDepth = 0;
+            lastError = "";
+            firstError = "";
+            deepestError = "";
+            failureHistory.clear();
 
-        json response;
-        if (success) {
+            cout << "Starting scheduling process..." << endl;
+            cout << "Sections: " << sections.size() << endl;
+            cout << "Courses: " << courses.size() << endl;
+            cout << "Instructors: " << instructors.size() << endl;
+            cout << "TAs: " << tas.size() << endl;
+            cout << "Rooms: " << rooms.size() << endl;
 
-            response = timetableToJson();
+            bool success = solve(0);
+
+            auto endTime = chrono::steady_clock::now();
+            auto duration = chrono::duration_cast<chrono::milliseconds>(endTime - startTime).count();
+
+            json response;
+            if (success) {
+                response = timetableToJson();
+                cout << "SUCCESS: Valid timetable generated in " << duration << "ms" << endl;
+            }
+            else {
+                response["success"] = false;
+
+                string rootCause = deepestError.empty() ? lastError : deepestError;
+                if (rootCause.empty()) {
+                    rootCause = "No valid solution found";
+                }
+
+                response["error"] = rootCause;
+                response["rootCause"] = deepestError;
+                response["lastAttempt"] = lastError;
+
+                cout << "FAILED after " << duration << "ms" << endl;
+                cout << "ROOT CAUSE (deepest failure):\n" << deepestError << endl;
+                cout << "Last backtracking from:\n" << lastError << endl;
+
+                json failureChain = json::array();
+                for (auto& failure : failureHistory) {
+                    json failInfo;
+                    failInfo["courseID"] = failure.courseID;
+                    failInfo["courseName"] = failure.courseName;
+                    failInfo["sectionID"] = failure.sectionID;
+                    failInfo["reason"] = failure.reason;
+                    failInfo["recursionDepth"] = failure.depth;
+                    if (failure.slotsAvailable > 0) {
+                        failInfo["attemptsOrSlots"] = failure.slotsAvailable;
+                    }
+                    failureChain.push_back(failInfo);
+                }
+                response["failureChain"] = failureChain;
+
+                response["diagnostics"] = json::object();
+                response["diagnostics"]["totalSections"] = sections.size();
+                response["diagnostics"]["totalCourses"] = courses.size();
+                response["diagnostics"]["totalInstructors"] = instructors.size();
+                response["diagnostics"]["totalTAs"] = tas.size();
+                response["diagnostics"]["totalRooms"] = rooms.size();
+                response["diagnostics"]["maxSlots"] = SLOTS_MAX;
+                response["diagnostics"]["timeTakenMs"] = duration;
+                response["diagnostics"]["maxRecursionDepth"] = maxDepthReached;
+                response["diagnostics"]["deepestFailureDepth"] = deepestFailureDepth;
+
+                int totalCoursesRequired = 0;
+                int totalCoursesScheduled = 0;
+
+                json partialSchedule = json::array();
+                for (size_t j = 0; j < sections.size(); j++) {
+                    totalCoursesRequired += sections[j].assignedCourses.size();
+                    totalCoursesScheduled += scheduledCourses[j].size();
+
+                    if (sections[j].assignedCourses.size() > scheduledCourses[j].size()) {
+                        json sectionInfo;
+                        sectionInfo["sectionID"] = sections[j].sectionID;
+
+                        json unscheduled = json::array();
+                        for (const auto& courseID : sections[j].assignedCourses) {
+                            if (scheduledCourses[j].find(courseID) == scheduledCourses[j].end()) {
+                                json courseInfo;
+                                courseInfo["courseID"] = courseID;
+                                if (getCourse.find(courseID) != getCourse.end()) {
+                                    courseInfo["courseName"] = getCourse[courseID].courseName;
+                                    courseInfo["duration"] = getCourse[courseID].duration;
+                                    courseInfo["type"] = getCourse[courseID].type;
+                                }
+                                unscheduled.push_back(courseInfo);
+                            }
+                        }
+                        sectionInfo["unscheduledCourses"] = unscheduled;
+                        sectionInfo["totalScheduled"] = scheduledCourses[j].size();
+                        sectionInfo["totalRequired"] = sections[j].assignedCourses.size();
+
+                        partialSchedule.push_back(sectionInfo);
+                    }
+                }
+
+                response["diagnostics"]["totalCoursesRequired"] = totalCoursesRequired;
+                response["diagnostics"]["totalCoursesScheduled"] = totalCoursesScheduled;
+                response["diagnostics"]["schedulingProgress"] = totalCoursesRequired > 0 ?
+                    (totalCoursesScheduled * 100.0 / totalCoursesRequired) : 0;
+
+                if (!partialSchedule.empty()) {
+                    response["diagnostics"]["sectionsWithUnscheduledCourses"] = partialSchedule;
+                }
+
+                json suggestions = json::array();
+
+                if (deepestError.find("GRAD") != string::npos &&
+                    (deepestError.find("cannot fit") != string::npos || deepestError.find("consecutive slots: 0") != string::npos)) {
+                    suggestions.push_back("CRITICAL: GRAD course is the root problem!");
+
+                    for (auto& course : courses) {
+                        if (course.courseID == "GRAD1" || course.courseID == "GRAD2") {
+                            suggestions.push_back("  → " + course.courseName + " requires " + to_string(course.duration) +
+                                " consecutive slots but none are available");
+                            suggestions.push_back("  → Solution: Reduce duration to " + to_string(min(4, course.duration / 2)) +
+                                " or add " + to_string(course.duration - SLOTS_MAX / 2) + " more slots");
+                        }
+                    }
+                }
+
+                if (deepestError.find("No qualified instructor") != string::npos) {
+                    suggestions.push_back("Add qualified instructors/TAs for the mentioned course");
+                }
+
+                if (!suggestions.empty()) {
+                    response["suggestions"] = suggestions;
+                }
+            }
+
+            res.set_content(response.dump(2), "application/json");
+            res.set_header("Access-Control-Allow-Origin", "*");
+            res.status = success ? 200 : 400;
+
         }
-        else {
-            response["success"] = false;
-            response["error"] = "No valid solution found";
+        catch (const json::parse_error& e) {
+            json errorResponse;
+            errorResponse["success"] = false;
+            errorResponse["error"] = string("Invalid JSON: ") + e.what();
+            res.set_content(errorResponse.dump(2), "application/json");
+            res.set_header("Access-Control-Allow-Origin", "*");
+            res.status = 400;
         }
-
-        res.set_content(response.dump(2), "application/json");
-        res.set_header("Access-Control-Allow-Origin", "*");
-        res.status = success ? 200 : 400;
+        catch (const exception& e) {
+            json errorResponse;
+            errorResponse["success"] = false;
+            errorResponse["error"] = string("Server error: ") + e.what();
+            res.set_content(errorResponse.dump(2), "application/json");
+            res.set_header("Access-Control-Allow-Origin", "*");
+            res.status = 500;
+        }
         });
 
     svr.Options("/api/schedule", [](const Request& req, Response& res) {
@@ -631,7 +959,8 @@ int main() {
         });
 
     cout << "Timetable Scheduling API Server" << endl;
-    cout << "Server running on: http://localhost:8080" << endl;
+    cout << "Server: http://localhost:8080" << endl;
+    cout << "Endpoint: POST /api/schedule" << endl;
 
     svr.listen("0.0.0.0", 8080);
 

@@ -1,4 +1,3 @@
-// models/TA.js
 const mongoose = require('mongoose');
 
 const taSchema = new mongoose.Schema({
