@@ -1,7 +1,7 @@
 const mongoose = require('mongoose');
 
 const taSchema = new mongoose.Schema({
-  taID: { type: String, required: true, unique: true },
+  taID: { type: String, required: true },
   name: { type: String, required: true },
   qualifiedCourses: [{ type: String }],
   preferredTimeSlots: [{ type: Number }],

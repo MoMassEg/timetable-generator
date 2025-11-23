@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from "react";
 import axios from "axios";
+import * as XLSX from 'xlsx';
+import { saveAs } from 'file-saver';
 
 const Instructors = () => {
   const [instructors, setInstructors] = useState([]);
@@ -11,6 +13,7 @@ const Instructors = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [timetableID, setTimetableID] = useState("");
+  const [importError, setImportError] = useState("");
   const [formData, setFormData] = useState({
     instructorID: "",
     name: "",
@@ -100,6 +103,252 @@ const Instructors = () => {
       const courseName = getCourseName(courseID);
       return `${courseID} - ${courseName}`;
     }).join(", ");
+  };
+
+  const handleExportToExcel = () => {
+    try {
+      const exportData = instructors.map(instructor => {
+        const preferredSlots = instructor.preferredTimeSlots?.sort((a, b) => a - b).join(", ") || "";
+        const unavailableSlots = instructor.unavailableTimeSlots?.sort((a, b) => a - b).join(", ") || "";
+
+        return {
+          'Instructor ID': instructor.instructorID,
+          'Name': instructor.name,
+          'Qualified Courses': instructor.qualifiedCourses?.join(", ") || "",
+          'Preferred Time Slots': preferredSlots,
+          'Unavailable Time Slots': unavailableSlots
+        };
+      });
+
+      const worksheet = XLSX.utils.json_to_sheet(exportData);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, "Instructors");
+
+      worksheet['!cols'] = [
+        { wch: 15 }, 
+        { wch: 25 }, 
+        { wch: 40 }, 
+        { wch: 30 }, 
+        { wch: 30 }  
+      ];
+
+      const excelBuffer = XLSX.write(workbook, { bookType: 'xlsx', type: 'array' });
+      const data = new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      
+      const fileName = `instructors_${timetableID}_${new Date().toISOString().split('T')[0]}.xlsx`;
+      saveAs(data, fileName);
+      
+      setError("");
+      alert(`Successfully exported ${instructors.length} instructors to Excel!`);
+    } catch (err) {
+      console.error("Error exporting to Excel:", err);
+      setError("Failed to export data to Excel");
+    }
+  };
+
+  const parseTimeSlots = (slotsString) => {
+    if (!slotsString || slotsString.trim() === "") return [];
+    
+    const slots = [];
+    const slotArray = slotsString.split(',').map(s => s.trim()).filter(s => s);
+    
+    for (const slot of slotArray) {
+      const slotIndex = parseInt(slot, 10);
+      if (!isNaN(slotIndex) && slotIndex >= 0 && slotIndex <= 39) {
+        slots.push(slotIndex);
+      }
+    }
+    
+    return slots;
+  };
+
+  const handleImportFromExcel = (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    
+    reader.onload = async (e) => {
+      try {
+        setLoading(true);
+        setImportError("");
+        
+        const data = new Uint8Array(e.target.result);
+        const workbook = XLSX.read(data, { type: 'array' });
+        const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+        const jsonData = XLSX.utils.sheet_to_json(worksheet);
+
+        if (jsonData.length === 0) {
+          setImportError("No data found in Excel file");
+          setLoading(false);
+          return;
+        }
+
+        const importedInstructors = [];
+        const errors = [];
+
+        for (let i = 0; i < jsonData.length; i++) {
+          const row = jsonData[i];
+          
+          try {
+            if (!row['Instructor ID'] || !row['Name']) {
+              errors.push(`Row ${i + 2}: Missing Instructor ID or Name`);
+              continue;
+            }
+
+            const qualifiedCourses = row['Qualified Courses'] 
+              ? row['Qualified Courses'].split(',').map(c => c.trim()).filter(c => c)
+              : [];
+
+            const preferredTimeSlots = parseTimeSlots(row['Preferred Time Slots']);
+            const unavailableTimeSlots = parseTimeSlots(row['Unavailable Time Slots']);
+
+            const overlapping = preferredTimeSlots.filter(slot => 
+              unavailableTimeSlots.includes(slot)
+            );
+            if (overlapping.length > 0) {
+              errors.push(`Row ${i + 2}: Overlapping time slots found: ${overlapping.join(', ')}`);
+            }
+
+            importedInstructors.push({
+              instructorID: String(row['Instructor ID']).trim(),
+              name: String(row['Name']).trim(),
+              qualifiedCourses,
+              preferredTimeSlots,
+              unavailableTimeSlots,
+              timetableID
+            });
+          } catch (err) {
+            errors.push(`Row ${i + 2}: ${err.message}`);
+          }
+        }
+
+        if (errors.length > 0) {
+          setImportError(`Import warnings:\n${errors.join('\n')}`);
+        }
+
+        let successCount = 0;
+        let failCount = 0;
+        const failedInstructors = [];
+
+        for (const instructor of importedInstructors) {
+          try {
+            const existingInstructor = instructors.find(
+              ins => ins.instructorID === instructor.instructorID
+            );
+
+            if (existingInstructor) {
+              await axios.put(
+                `http://localhost:5000/api/instructors/${existingInstructor._id}`,
+                instructor
+              );
+            } else {
+              await axios.post("http://localhost:5000/api/instructors", instructor);
+            }
+            successCount++;
+          } catch (err) {
+            failCount++;
+            failedInstructors.push(`${instructor.instructorID}: ${err.response?.data?.error || err.message}`);
+            console.error(`Error importing instructor ${instructor.instructorID}:`, err);
+          }
+        }
+
+        await fetchInstructors();
+
+        let message = `Import completed!\n✓ ${successCount} instructors imported successfully`;
+        if (failCount > 0) {
+          message += `\n✗ ${failCount} failed:\n${failedInstructors.join('\n')}`;
+          setImportError(message);
+        } else {
+          setError("");
+          alert(message);
+        }
+
+        event.target.value = '';
+        
+      } catch (err) {
+        console.error("Error importing Excel file:", err);
+        setImportError("Failed to import Excel file. Please check the file format.");
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    reader.readAsArrayBuffer(file);
+  };
+
+  const handleDownloadTemplate = () => {
+    const templateData = [
+      {
+        'Instructor ID': 'INS001',
+        'Name': 'John Doe',
+        'Qualified Courses': 'CS101, CS102, MATH201',
+        'Preferred Time Slots': '0, 1, 8, 16',
+        'Unavailable Time Slots': '20, 28'
+      },
+      {
+        'Instructor ID': 'INS002',
+        'Name': 'Jane Smith',
+        'Qualified Courses': 'MATH101, PHYS101',
+        'Preferred Time Slots': '10, 18, 26',
+        'Unavailable Time Slots': '5'
+      },
+      {
+        'Instructor ID': 'INS003',
+        'Name': 'Bob Johnson',
+        'Qualified Courses': 'ENG101',
+        'Preferred Time Slots': '',
+        'Unavailable Time Slots': ''
+      }
+    ];
+
+    const worksheet = XLSX.utils.json_to_sheet(templateData);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Template");
+
+    worksheet['!cols'] = [
+      { wch: 15 },
+      { wch: 25 },
+      { wch: 40 },
+      { wch: 30 },
+      { wch: 30 }
+    ];
+
+    const instructions = [
+      { 'Field': 'Instructor ID', 'Description': 'Unique identifier for the instructor (required)', 'Example': 'INS001' },
+      { 'Field': 'Name', 'Description': 'Full name of the instructor (required)', 'Example': 'John Doe' },
+      { 'Field': 'Qualified Courses', 'Description': 'Comma-separated list of course IDs', 'Example': 'CS101, MATH201' },
+      { 'Field': 'Preferred Time Slots', 'Description': 'Comma-separated slot indices (0-39)', 'Example': '0, 1, 8, 16' },
+      { 'Field': 'Unavailable Time Slots', 'Description': 'Comma-separated slot indices (0-39)', 'Example': '20, 28' }
+    ];
+    
+    const instructionsSheet = XLSX.utils.json_to_sheet(instructions);
+    XLSX.utils.book_append_sheet(workbook, instructionsSheet, "Instructions");
+    instructionsSheet['!cols'] = [{ wch: 25 }, { wch: 50 }, { wch: 30 }];
+
+    const timeSlotReference = [];
+    let slotIndex = 0;
+    
+    for (let dayIndex = 0; dayIndex < days.length; dayIndex++) {
+      for (let timeIndex = 0; timeIndex < times.length; timeIndex++) {
+        timeSlotReference.push({
+          'Index': slotIndex,
+          'Day': days[dayIndex],
+          'Time': times[timeIndex]
+        });
+        slotIndex++;
+      }
+    }
+    
+    const referenceSheet = XLSX.utils.json_to_sheet(timeSlotReference);
+    XLSX.utils.book_append_sheet(workbook, referenceSheet, "Time Slot Reference");
+    referenceSheet['!cols'] = [{ wch: 10 }, { wch: 15 }, { wch: 20 }];
+
+    const excelBuffer = XLSX.write(workbook, { bookType: 'xlsx', type: 'array' });
+    const data = new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    saveAs(data, 'instructors_template.xlsx');
+    
+    alert('Template downloaded!\n\nCheck the sheets:\n• Template - Sample data\n• Instructions - Field descriptions\n• Time Slot Reference - Index to day/time mapping');
   };
 
   const filteredInstructors = instructors.filter(ins => {
@@ -245,13 +494,56 @@ const Instructors = () => {
       <div className="card">
         <div className="card-header">
           <h1 className="card-title">Instructor Management</h1>
-          <button 
-            onClick={() => setShowModal(true)} 
-            className="btn btn-primary"
-            disabled={loading}
-          >
-            Add Instructor
-          </button>
+          <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+            <button 
+              onClick={handleDownloadTemplate}
+              className="btn btn-secondary"
+              disabled={loading}
+              title="Download Excel template with time slot reference"
+              style={{ display: "flex", alignItems: "center", gap: "0.25rem" }}
+            >
+              Template
+            </button>
+            
+            <label 
+              className="btn btn-secondary" 
+              style={{ 
+                marginBottom: 0, 
+                cursor: loading ? "not-allowed" : "pointer",
+                display: "flex", 
+                alignItems: "center", 
+                gap: "0.25rem",
+                opacity: loading ? 0.6 : 1
+              }}
+            >
+              Import
+              <input
+                type="file"
+                accept=".xlsx, .xls"
+                onChange={handleImportFromExcel}
+                style={{ display: "none" }}
+                disabled={loading}
+              />
+            </label>
+            
+            <button 
+              onClick={handleExportToExcel}
+              className="btn btn-secondary"
+              disabled={loading || instructors.length === 0}
+              title="Export all instructors to Excel"
+              style={{ display: "flex", alignItems: "center", gap: "0.25rem" }}
+            >
+              Export
+            </button>
+            
+            <button 
+              onClick={() => setShowModal(true)} 
+              className="btn btn-primary"
+              disabled={loading}
+            >
+              Add Instructor
+            </button>
+          </div>
         </div>
 
         {error && (
@@ -268,16 +560,37 @@ const Instructors = () => {
           </div>
         )}
 
+        {importError && (
+          <div
+            style={{
+              padding: "1rem",
+              backgroundColor: "#fef3c7",
+              color: "#92400e",
+              borderRadius: "4px",
+              margin: "1rem",
+              whiteSpace: "pre-line",
+              fontSize: "0.875rem"
+            }}
+          >
+            {importError}
+          </div>
+        )}
+
         <div style={{ padding: "1rem" }}>
           <input
             type="text"
             className="form-input"
-            placeholder="Search instructors..."
+            placeholder="Search instructors by ID, name, or course..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             style={{ marginBottom: "1rem" }}
             disabled={loading}
           />
+          {loading && (
+            <div style={{ textAlign: "center", padding: "0.5rem", color: "#6b7280" }}>
+              Loading...
+            </div>
+          )}
         </div>
 
         <div className="table-container">
@@ -318,7 +631,7 @@ const Instructors = () => {
             </tbody>
           </table>
 
-          {filteredInstructors.length === 0 && (
+          {filteredInstructors.length === 0 && !loading && (
             <div className="empty-state">
               <h3>No instructors found</h3>
               <p>{searchTerm ? "Try a different search term" : "Add your first instructor to get started"}</p>
@@ -349,6 +662,7 @@ const Instructors = () => {
                   }
                   required
                   disabled={!!editingInstructor || loading}
+                  placeholder="e.g., INS001"
                 />
               </div>
 
@@ -363,6 +677,7 @@ const Instructors = () => {
                   }
                   required
                   disabled={loading}
+                  placeholder="e.g., John Doe"
                 />
               </div>
 
@@ -388,6 +703,7 @@ const Instructors = () => {
                 >
                   {filteredCourses.map((course) => {
                     const assignedInstructor = getAssignedInstructor(course.courseID);
+                    const isCurrentlySelected = formData.qualifiedCourses.includes(course.courseID);
                     return (
                       <label
                         key={course.courseID}
@@ -396,13 +712,14 @@ const Instructors = () => {
                           alignItems: "center", 
                           marginBottom: "0.5rem",
                           padding: "0.25rem",
-                          backgroundColor: formData.qualifiedCourses.includes(course.courseID) ? "#e0f2fe" : "transparent",
-                          borderRadius: "0.25rem"
+                          backgroundColor: isCurrentlySelected ? "#e0f2fe" : "transparent",
+                          borderRadius: "0.25rem",
+                          cursor: loading ? "not-allowed" : "pointer"
                         }}
                       >
                         <input
                           type="checkbox"
-                          checked={formData.qualifiedCourses.includes(course.courseID)}
+                          checked={isCurrentlySelected}
                           onChange={() => handleCourseToggle(course.courseID)}
                           style={{ marginRight: "0.5rem" }}
                           disabled={loading}
@@ -417,39 +734,50 @@ const Instructors = () => {
                   })}
                   {filteredCourses.length === 0 && (
                     <p style={{ textAlign: "center", color: "#6b7280", padding: "1rem" }}>
-                      No courses found
+                      {courseSearchTerm ? "No courses match your search" : "No courses found"}
                     </p>
                   )}
                 </div>
+                {formData.qualifiedCourses.length > 0 && (
+                  <small style={{ color: "#6b7280", marginTop: "0.5rem", display: "block" }}>
+                    {formData.qualifiedCourses.length} course(s) selected
+                  </small>
+                )}
               </div>
 
               <div className="form-group">
                 <label className="form-label">Time Preferences</label>
                 <div style={{ marginBottom: "1rem" }}>
-                  <div style={{ display: "flex", gap: "1rem", marginBottom: "0.5rem" }}>
+                  <div style={{ display: "flex", gap: "1rem", marginBottom: "0.5rem", flexWrap: "wrap" }}>
                     <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
                       <div style={{ width: "20px", height: "20px", backgroundColor: "#10b981", borderRadius: "4px" }}></div>
-                      <span>Preferred</span>
+                      <span style={{ fontSize: "0.875rem" }}>Preferred</span>
                     </div>
                     <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
                       <div style={{ width: "20px", height: "20px", backgroundColor: "#ef4444", borderRadius: "4px" }}></div>
-                      <span>Unavailable</span>
+                      <span style={{ fontSize: "0.875rem" }}>Unavailable</span>
                     </div>
                     <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
                       <div style={{ width: "20px", height: "20px", backgroundColor: "#f3f4f6", border: "1px solid #d1d5db", borderRadius: "4px" }}></div>
-                      <span>Available</span>
+                      <span style={{ fontSize: "0.875rem" }}>Available</span>
                     </div>
                   </div>
+                  <small style={{ color: "#6b7280", display: "block", marginBottom: "0.5rem" }}>
+                    Click 'P' to mark as preferred, 'U' to mark as unavailable
+                  </small>
                 </div>
                 
                 <div style={{ overflowX: "auto" }}>
-                  <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.875rem" }}>
                     <thead>
                       <tr>
-                        <th style={{ padding: "0.5rem", border: "1px solid #d1d5db", backgroundColor: "#f9fafb" }}>Time</th>
-                        {days.map(day => (
+                        <th style={{ padding: "0.5rem", border: "1px solid #d1d5db", backgroundColor: "#f9fafb", position: "sticky", left: 0, zIndex: 1 }}>Time</th>
+                        {days.map((day, dayIndex) => (
                           <th key={day} style={{ padding: "0.5rem", border: "1px solid #d1d5db", backgroundColor: "#f9fafb", minWidth: "80px" }}>
-                            {day}
+                            <div>{day.substring(0, 3)}</div>
+                            <small style={{ fontSize: "0.7rem", color: "#6b7280" }}>
+                              ({dayIndex * 8}-{dayIndex * 8 + 7})
+                            </small>
                           </th>
                         ))}
                       </tr>
@@ -457,15 +785,18 @@ const Instructors = () => {
                     <tbody>
                       {times.map((time, timeIndex) => (
                         <tr key={time}>
-                          <td style={{ padding: "0.5rem", border: "1px solid #d1d5db", fontWeight: "500", fontSize: "0.875rem" }}>
+                          <td style={{ padding: "0.5rem", border: "1px solid #d1d5db", fontWeight: "500", fontSize: "0.75rem", backgroundColor: "#fff", position: "sticky", left: 0, zIndex: 1 }}>
                             {time}
                           </td>
                           {days.map((day, dayIndex) => {
                             const slotIndex = dayIndex * 8 + timeIndex;
                             const status = getSlotStatus(slotIndex);
                             return (
-                              <td key={`${day}-${timeIndex}`} style={{ padding: "0.25rem", border: "1px solid #d1d5db" }}>
-                                <div style={{ display: "flex", gap: "0.25rem" }}>
+                              <td key={`${day}-${timeIndex}`} style={{ padding: "0.25rem", border: "1px solid #d1d5db", position: "relative" }}>
+                                <div style={{ fontSize: "0.65rem", color: "#9ca3af", position: "absolute", top: "2px", left: "2px" }}>
+                                  {slotIndex}
+                                </div>
+                                <div style={{ display: "flex", gap: "0.25rem", marginTop: "12px" }}>
                                   <button
                                     type="button"
                                     onClick={() => handleTimeSlotToggle(slotIndex, 'preferredTimeSlots')}
@@ -476,10 +807,13 @@ const Instructors = () => {
                                       border: "1px solid #d1d5db",
                                       borderRadius: "4px",
                                       backgroundColor: status === 'preferred' ? "#10b981" : "#f3f4f6",
-                                      cursor: status === 'unavailable' ? "not-allowed" : "pointer",
-                                      fontSize: "0.75rem"
+                                      color: status === 'preferred' ? "#fff" : "#374151",
+                                      cursor: status === 'unavailable' || loading ? "not-allowed" : "pointer",
+                                      fontSize: "0.75rem",
+                                      fontWeight: status === 'preferred' ? "600" : "400",
+                                      transition: "all 0.2s"
                                     }}
-                                    title="Click to set as preferred"
+                                    title={`Slot ${slotIndex}: Click to set as preferred`}
                                   >
                                     P
                                   </button>
@@ -493,10 +827,13 @@ const Instructors = () => {
                                       border: "1px solid #d1d5db",
                                       borderRadius: "4px",
                                       backgroundColor: status === 'unavailable' ? "#ef4444" : "#f3f4f6",
-                                      cursor: status === 'preferred' ? "not-allowed" : "pointer",
-                                      fontSize: "0.75rem"
+                                      color: status === 'unavailable' ? "#fff" : "#374151",
+                                      cursor: status === 'preferred' || loading ? "not-allowed" : "pointer",
+                                      fontSize: "0.75rem",
+                                      fontWeight: status === 'unavailable' ? "600" : "400",
+                                      transition: "all 0.2s"
                                     }}
-                                    title="Click to set as unavailable"
+                                    title={`Slot ${slotIndex}: Click to set as unavailable`}
                                   >
                                     U
                                   </button>
@@ -509,6 +846,16 @@ const Instructors = () => {
                     </tbody>
                   </table>
                 </div>
+                {(formData.preferredTimeSlots.length > 0 || formData.unavailableTimeSlots.length > 0) && (
+                  <div style={{ marginTop: "0.5rem", fontSize: "0.875rem", color: "#6b7280" }}>
+                    <div>
+                      <strong>Preferred Slots:</strong> {formData.preferredTimeSlots.sort((a, b) => a - b).join(", ") || "None"}
+                    </div>
+                    <div>
+                      <strong>Unavailable Slots:</strong> {formData.unavailableTimeSlots.sort((a, b) => a - b).join(", ") || "None"}
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div className="modal-footer">
@@ -525,7 +872,7 @@ const Instructors = () => {
                   className="btn btn-primary"
                   disabled={loading}
                 >
-                  {loading ? "Processing..." : (editingInstructor ? "Update" : "Create")}
+                  {loading ? "Processing..." : (editingInstructor ? "Update Instructor" : "Create Instructor")}
                 </button>
               </div>
             </form>

@@ -2,7 +2,7 @@ const mongoose = require("mongoose");
 
 const groupSchema = new mongoose.Schema(
   {
-    groupID: { type: String, required: true, unique: true },
+    groupID: { type: String, required: true },
     yearID: { type: Number, required: true },
     sections: [{ type: String }],
     timetableID: { type: String, required: true }

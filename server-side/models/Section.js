@@ -1,7 +1,7 @@
 const mongoose = require('mongoose');
 
 const sectionSchema = new mongoose.Schema({
-  sectionID: { type: String, required: true, unique: true },
+  sectionID: { type: String, required: true },
   groupID: { type: String, required: true },
   year: { type: Number, required: true },
   studentCount: { type: Number, default: 0 },

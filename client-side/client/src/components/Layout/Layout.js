@@ -1,4 +1,3 @@
-// Layout.js
 import React, { useState, useEffect } from 'react';
 import { NavLink } from 'react-router-dom';
 import axios from 'axios';
@@ -33,7 +32,6 @@ const Layout = ({ children }) => {
     { path: '/timetable', label: 'View Timetable', icon: Calendar },
   ];
 
-  // Load selected timetable from localStorage
   useEffect(() => {
     const savedID = localStorage.getItem('selectedTimetableID');
     if (savedID) {
@@ -41,7 +39,6 @@ const Layout = ({ children }) => {
     }
   }, []);
 
-  // Fetch timetables on component mount
   useEffect(() => {
     fetchTimetables();
   }, []);
@@ -65,7 +62,6 @@ const Layout = ({ children }) => {
     setSelectedTimetableID(id);
     localStorage.setItem('selectedTimetableID', id);
     
-    // Reload the page
     window.location.reload();
   };
 
@@ -94,7 +90,6 @@ const Layout = ({ children }) => {
       localStorage.removeItem('selectedTimetableID');
       setSelectedTimetableID('');
       
-      // Reload the page
       window.location.reload();
     } catch (error) {
       console.error('Error deleting timetable:', error);

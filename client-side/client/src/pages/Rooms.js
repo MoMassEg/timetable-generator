@@ -1,6 +1,7 @@
-// pages/Rooms.js
 import React, { useState, useEffect } from "react";
 import axios from "axios";
+import * as XLSX from 'xlsx';
+import { saveAs } from 'file-saver';
 
 const Rooms = () => {
   const [rooms, setRooms] = useState([]);
@@ -9,6 +10,7 @@ const Rooms = () => {
   const [searchTerm, setSearchTerm] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [importError, setImportError] = useState("");
   const [timetableID, setTimetableID] = useState("");
   const [formData, setFormData] = useState({
     roomID: "",
@@ -19,7 +21,6 @@ const Rooms = () => {
 
   const api = axios.create({ baseURL: "http://localhost:5000/api" });
 
-  // Check for timetable changes
   useEffect(() => {
     const handleStorageChange = () => {
       const newTimetableID = localStorage.getItem("selectedTimetableID");
@@ -34,7 +35,6 @@ const Rooms = () => {
     };
   }, []);
 
-  // Fetch rooms when timetableID changes
   useEffect(() => {
     if (timetableID) {
       fetchRooms();
@@ -59,6 +59,217 @@ const Rooms = () => {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleExportToExcel = () => {
+    try {
+      const exportData = rooms.map(room => {
+        return {
+          'Room ID': room.roomID,
+          'Type': room.type,
+          'Lab Type': room.labType || '',
+          'Capacity': room.capacity
+        };
+      });
+
+      const worksheet = XLSX.utils.json_to_sheet(exportData);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, "Rooms");
+
+      worksheet['!cols'] = [
+        { wch: 15 },  
+        { wch: 10 },  
+        { wch: 20 },  
+        { wch: 10 }   
+      ];
+
+      const excelBuffer = XLSX.write(workbook, { bookType: 'xlsx', type: 'array' });
+      const data = new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      
+      const fileName = `rooms_${timetableID}_${new Date().toISOString().split('T')[0]}.xlsx`;
+      saveAs(data, fileName);
+      
+      setError("");
+      alert(`Successfully exported ${rooms.length} rooms to Excel!`);
+    } catch (err) {
+      console.error("Error exporting to Excel:", err);
+      setError("Failed to export data to Excel");
+    }
+  };
+
+  const handleImportFromExcel = (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    
+    reader.onload = async (e) => {
+      try {
+        setLoading(true);
+        setImportError("");
+        
+        const data = new Uint8Array(e.target.result);
+        const workbook = XLSX.read(data, { type: 'array' });
+        const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+        const jsonData = XLSX.utils.sheet_to_json(worksheet);
+
+        if (jsonData.length === 0) {
+          setImportError("No data found in Excel file");
+          setLoading(false);
+          return;
+        }
+
+        console.log(`Importing to timetable: ${timetableID}`);
+        console.log(`Found ${jsonData.length} rooms in Excel file`);
+
+        const importedRooms = [];
+        const errors = [];
+
+        for (let i = 0; i < jsonData.length; i++) {
+          const row = jsonData[i];
+          
+          try {
+            if (!row['Room ID']) {
+              errors.push(`Row ${i + 2}: Missing Room ID`);
+              continue;
+            }
+
+            const type = row['Type']?.toLowerCase().trim();
+            if (!['lec', 'lab', 'tut'].includes(type)) {
+              errors.push(`Row ${i + 2}: Invalid type "${row['Type']}". Must be lec, lab, or tut`);
+              continue;
+            }
+
+            const capacity = parseInt(row['Capacity']);
+            if (isNaN(capacity) || capacity < 1) {
+              errors.push(`Row ${i + 2}: Invalid capacity "${row['Capacity']}". Must be a number >= 1`);
+              continue;
+            }
+
+            importedRooms.push({
+              roomID: String(row['Room ID']).trim(),
+              type: type,
+              labType: row['Lab Type'] ? String(row['Lab Type']).trim() : '',
+              capacity: capacity,
+              timetableID
+            });
+          } catch (err) {
+            errors.push(`Row ${i + 2}: ${err.message}`);
+          }
+        }
+
+        if (errors.length > 0) {
+          setImportError(`Import warnings:\n${errors.join('\n')}`);
+        }
+
+        console.log(`Valid rooms to import: ${importedRooms.length}`);
+
+        let successCount = 0;
+        let failCount = 0;
+        let updatedCount = 0;
+        let createdCount = 0;
+        const failedRooms = [];
+
+        for (const room of importedRooms) {
+          try {
+            const existingRoom = rooms.find(r => r.roomID === room.roomID);
+
+            if (existingRoom) {
+              await api.put(`/rooms/${existingRoom._id}`, room);
+              successCount++;
+              updatedCount++;
+              console.log(`Updated: ${room.roomID}`);
+            } else {
+              await api.post("/rooms", room);
+              successCount++;
+              createdCount++;
+              console.log(`Created: ${room.roomID}`);
+            }
+          } catch (err) {
+            failCount++;
+            const errorMsg = err.response?.data?.error || err.message;
+            failedRooms.push(`${room.roomID}: ${errorMsg}`);
+            console.error(`Error importing room ${room.roomID}:`, errorMsg);
+          }
+        }
+
+        await fetchRooms();
+
+        let message = `Import completed!\n✓ ${successCount} rooms imported successfully`;
+        if (createdCount > 0) message += `\n  - ${createdCount} new rooms created`;
+        if (updatedCount > 0) message += `\n  - ${updatedCount} existing rooms updated`;
+        
+        if (failCount > 0) {
+          message += `\n✗ ${failCount} failed:\n${failedRooms.join('\n')}`;
+          setImportError(message);
+        } else {
+          setError("");
+          setImportError("");
+          alert(message);
+        }
+
+        event.target.value = '';
+        
+      } catch (err) {
+        console.error("Error importing Excel file:", err);
+        setImportError("Failed to import Excel file. Please check the file format.");
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    reader.readAsArrayBuffer(file);
+  };
+
+  const handleDownloadTemplate = () => {
+    const templateData = [
+      {
+        'Room ID': 'R101',
+        'Type': 'lec',
+        'Lab Type': '',
+        'Capacity': 50
+      },
+      {
+        'Room ID': 'LAB201',
+        'Type': 'lab',
+        'Lab Type': 'Computer',
+        'Capacity': 30
+      },
+      {
+        'Room ID': 'TUT301',
+        'Type': 'tut',
+        'Lab Type': '',
+        'Capacity': 25
+      }
+    ];
+
+    const worksheet = XLSX.utils.json_to_sheet(templateData);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Template");
+
+    worksheet['!cols'] = [
+      { wch: 15 },
+      { wch: 10 },
+      { wch: 20 },
+      { wch: 10 }
+    ];
+
+    const instructions = [
+      { 'Field': 'Room ID', 'Description': 'Unique identifier for the room (required)', 'Example': 'R101', 'Valid Values': 'Any text' },
+      { 'Field': 'Type', 'Description': 'Type of room (required)', 'Example': 'lec', 'Valid Values': 'lec, lab, tut' },
+      { 'Field': 'Lab Type', 'Description': 'Type of lab (optional)', 'Example': 'Computer', 'Valid Values': 'Any text or leave empty' },
+      { 'Field': 'Capacity', 'Description': 'Maximum capacity (required)', 'Example': '50', 'Valid Values': 'Number >= 1' }
+    ];
+    
+    const instructionsSheet = XLSX.utils.json_to_sheet(instructions);
+    XLSX.utils.book_append_sheet(workbook, instructionsSheet, "Instructions");
+    instructionsSheet['!cols'] = [{ wch: 15 }, { wch: 40 }, { wch: 15 }, { wch: 20 }];
+
+    const excelBuffer = XLSX.write(workbook, { bookType: 'xlsx', type: 'array' });
+    const data = new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    saveAs(data, 'rooms_template.xlsx');
+    
+    alert('Template downloaded!\n\nCheck the sheets:\n• Template - Sample data\n• Instructions - Field descriptions and valid values');
   };
 
   const filteredRooms = rooms.filter((room) => {
@@ -145,13 +356,56 @@ const Rooms = () => {
     <div className="card">
       <div className="card-header">
         <h1 className="card-title">Room Management</h1>
-        <button 
-          onClick={() => setShowModal(true)} 
-          className="btn btn-primary"
-          disabled={loading}
-        >
-          Add Room
-        </button>
+        <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+          <button 
+            onClick={handleDownloadTemplate}
+            className="btn btn-secondary"
+            disabled={loading}
+            title="Download Excel template with instructions"
+            style={{ display: "flex", alignItems: "center", gap: "0.25rem" }}
+          >
+            Template
+          </button>
+          
+          <label 
+            className="btn btn-secondary" 
+            style={{ 
+              marginBottom: 0, 
+              cursor: loading ? "not-allowed" : "pointer",
+              display: "flex", 
+              alignItems: "center", 
+              gap: "0.25rem",
+              opacity: loading ? 0.6 : 1
+            }}
+          >
+            Import
+            <input
+              type="file"
+              accept=".xlsx, .xls"
+              onChange={handleImportFromExcel}
+              style={{ display: "none" }}
+              disabled={loading}
+            />
+          </label>
+          
+          <button 
+            onClick={handleExportToExcel}
+            className="btn btn-secondary"
+            disabled={loading || rooms.length === 0}
+            title="Export all rooms to Excel"
+            style={{ display: "flex", alignItems: "center", gap: "0.25rem" }}
+          >
+            Export
+          </button>
+          
+          <button 
+            onClick={() => setShowModal(true)} 
+            className="btn btn-primary"
+            disabled={loading}
+          >
+            Add Room
+          </button>
+        </div>
       </div>
 
       {error && (
@@ -168,16 +422,37 @@ const Rooms = () => {
         </div>
       )}
 
+      {importError && (
+        <div
+          style={{
+            padding: "1rem",
+            backgroundColor: "#fef3c7",
+            color: "#92400e",
+            borderRadius: "4px",
+            margin: "1rem",
+            whiteSpace: "pre-line",
+            fontSize: "0.875rem"
+          }}
+        >
+          {importError}
+        </div>
+      )}
+
       <div style={{ padding: "1rem" }}>
         <input
           type="text"
           className="form-input"
-          placeholder="Search rooms..."
+          placeholder="Search rooms by ID, type, lab type, or capacity..."
           value={searchTerm}
           onChange={(e) => setSearchTerm(e.target.value)}
           style={{ marginBottom: "1rem" }}
           disabled={loading}
         />
+        {loading && (
+          <div style={{ textAlign: "center", padding: "0.5rem", color: "#6b7280" }}>
+            Loading...
+          </div>
+        )}
       </div>
 
       <div className="table-container">
@@ -197,8 +472,12 @@ const Rooms = () => {
               <tr key={room._id}>
                 <td>{index + 1}</td>
                 <td>{room.roomID}</td>
-                <td>{room.type}</td>
-                <td>{room.labType || "-"}</td>
+                <td>
+                  <span className={`badge badge-${room.type === 'lec' ? 'primary' : room.type === 'lab' ? 'warning' : 'info'}`}>
+                    {room.type}
+                  </span>
+                </td>
+                <td>{room.labType || "—"}</td>
                 <td>{room.capacity}</td>
                 <td>
                   <button
@@ -222,7 +501,7 @@ const Rooms = () => {
           </tbody>
         </table>
 
-        {filteredRooms.length === 0 && (
+        {filteredRooms.length === 0 && !loading && (
           <div className="empty-state">
             <h3>No rooms found</h3>
             <p>{searchTerm ? "Try a different search term" : "Add your first room to get started"}</p>
@@ -250,7 +529,13 @@ const Rooms = () => {
                   }
                   required
                   disabled={!!editingRoom || loading}
+                  placeholder="e.g., R101"
                 />
+                {editingRoom && (
+                  <small style={{ color: "#6b7280", display: "block", marginTop: "0.25rem" }}>
+                    Room ID cannot be changed
+                  </small>
+                )}
               </div>
 
               <div className="form-group">
@@ -263,14 +548,14 @@ const Rooms = () => {
                   }
                   disabled={loading}
                 >
-                  <option value="lec">Lecture</option>
-                  <option value="lab">Lab</option>
-                  <option value="tut">Tutorial</option>
+                  <option value="lec">Lecture (lec)</option>
+                  <option value="lab">Lab (lab)</option>
+                  <option value="tut">Tutorial (tut)</option>
                 </select>
               </div>
 
               <div className="form-group">
-                <label className="form-label">Lab Type</label>
+                <label className="form-label">Lab Type (Optional)</label>
                 <input
                   type="text"
                   className="form-input"
@@ -279,7 +564,11 @@ const Rooms = () => {
                     setFormData({ ...formData, labType: e.target.value })
                   }
                   disabled={loading}
+                  placeholder="e.g., Computer, Physics, Chemistry"
                 />
+                <small style={{ color: "#6b7280", display: "block", marginTop: "0.25rem" }}>
+                  Specify lab type if Type is 'lab'
+                </small>
               </div>
 
               <div className="form-group">
@@ -294,7 +583,11 @@ const Rooms = () => {
                   min="1"
                   required
                   disabled={loading}
+                  placeholder="e.g., 50"
                 />
+                <small style={{ color: "#6b7280", display: "block", marginTop: "0.25rem" }}>
+                  Maximum number of students the room can accommodate
+                </small>
               </div>
 
               <div className="modal-footer">
@@ -311,7 +604,7 @@ const Rooms = () => {
                   className="btn btn-primary"
                   disabled={loading}
                 >
-                  {loading ? "Processing..." : (editingRoom ? "Update" : "Create")}
+                  {loading ? "Processing..." : (editingRoom ? "Update Room" : "Create Room")}
                 </button>
               </div>
             </form>

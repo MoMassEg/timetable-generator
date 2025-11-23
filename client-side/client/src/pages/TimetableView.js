@@ -21,10 +21,8 @@ const TimetableView = () => {
 
   useEffect(() => {
     const loadData = async () => {
-      const cacheLoaded = await loadCachedData();
-      if (!cacheLoaded) {
-        await fetchAndGenerateSchedule();
-      }
+      await loadCachedData();
+
     };
     loadData();
   }, []);
