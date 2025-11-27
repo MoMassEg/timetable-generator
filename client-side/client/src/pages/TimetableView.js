@@ -21,8 +21,10 @@ const TimetableView = () => {
 
   useEffect(() => {
     const loadData = async () => {
-      await loadCachedData();
-
+      const cacheLoaded = await loadCachedData();
+      if (!cacheLoaded) {
+        await fetchAndGenerateSchedule();
+      }
     };
     loadData();
   }, []);
@@ -148,6 +150,31 @@ const TimetableView = () => {
     }).filter(section => section.schedule.length > 0);
   };
 
+  // Helper function to check if two sessions are identical
+  const areSessionsIdentical = (session1, session2) => {
+    if (!session1 || !session2) return false;
+    return (
+      session1.courseID === session2.courseID &&
+      session1.courseName === session2.courseName &&
+      session1.instructorName === session2.instructorName &&
+      session1.roomID === session2.roomID &&
+      session1.type === session2.type
+    );
+  };
+
+  // Helper function to determine if there's a separator needed
+  const needsSeparator = (currentSection, nextSection, type) => {
+    if (!nextSection) return false;
+    
+    if (type === 'year') {
+      return currentSection.year !== nextSection.year;
+    } else if (type === 'group') {
+      return currentSection.year === nextSection.year && 
+             currentSection.groupID !== nextSection.groupID;
+    }
+    return false;
+  };
+
   const handlePrint = () => {
     window.print();
   };
@@ -160,7 +187,9 @@ const TimetableView = () => {
 
       days.forEach((day, dayIndex) => {
         const worksheetData = [];
+        const mergeRanges = [];
         
+        // Title
         worksheetData.push([`${day} - Timetable`]);
         worksheetData.push([]);
         worksheetData.push([`Generated: ${new Date().toLocaleString('en-US', { 
@@ -172,6 +201,7 @@ const TimetableView = () => {
         })}`]);
         worksheetData.push([]);
         
+        // Headers
         const headerRow = ['Time'];
         filteredSections.forEach(section => {
           headerRow.push(`${section.sectionID}\n${section.groupID} - Year ${section.year}`);
@@ -179,31 +209,78 @@ const TimetableView = () => {
         worksheetData.push(headerRow);
 
         const timeSlots = Array.from({ length: 8 }, (_, i) => i);
+        
         timeSlots.forEach((slot) => {
           const slotIndex = dayIndex * 8 + slot;
           const row = [getTimeLabel(slot)];
+          const rowIndex = worksheetData.length;
+          
+          let colIndex = 1;
+          let skipColumns = new Set();
 
-          filteredSections.forEach(section => {
+          for (let i = 0; i < filteredSections.length; i++) {
+            if (skipColumns.has(i)) {
+              continue;
+            }
+
+            const section = filteredSections[i];
             const session = section.schedule.find(s => s.slotIndex === slotIndex);
+            
             if (session) {
-              row.push(
-                `${session.courseID}\n${session.courseName}\n\nInstructor: ${session.instructorName}\nRoom: ${session.roomID}\nType: ${session.type.toUpperCase()}`
-              );
+              // Check how many consecutive sections have the same session
+              let mergeCount = 1;
+              for (let j = i + 1; j < filteredSections.length; j++) {
+                const nextSection = filteredSections[j];
+                const nextSession = nextSection.schedule.find(s => s.slotIndex === slotIndex);
+                
+                if (areSessionsIdentical(session, nextSession)) {
+                  mergeCount++;
+                  skipColumns.add(j);
+                } else {
+                  break;
+                }
+              }
+
+              const cellValue = `${session.courseID}\n${session.courseName}\n\nInstructor: ${session.instructorName}\nRoom: ${session.roomID}\nType: ${session.type.toUpperCase()}`;
+              row.push(cellValue);
+              
+              // Add merge range if merging multiple columns
+              if (mergeCount > 1) {
+                mergeRanges.push({
+                  s: { r: rowIndex, c: colIndex },
+                  e: { r: rowIndex, c: colIndex + mergeCount - 1 }
+                });
+                // Add empty cells for merged columns
+                for (let k = 1; k < mergeCount; k++) {
+                  row.push('');
+                }
+                colIndex += mergeCount;
+              } else {
+                colIndex++;
+              }
             } else {
               row.push('');
+              colIndex++;
             }
-          });
+          }
 
           worksheetData.push(row);
         });
 
         const worksheet = XLSX.utils.aoa_to_sheet(worksheetData);
         
+        // Apply merges
+        if (mergeRanges.length > 0) {
+          worksheet['!merges'] = mergeRanges;
+        }
+
+        // Column widths
         worksheet['!cols'] = [
           { wch: 20 },
           ...filteredSections.map(() => ({ wch: 38 }))
         ];
 
+        // Row heights
         worksheet['!rows'] = [
           { hpt: 35 },
           { hpt: 10 },
@@ -215,10 +292,36 @@ const TimetableView = () => {
 
         const range = XLSX.utils.decode_range(worksheet['!ref']);
         
+        // Apply styles
         for (let R = range.s.r; R <= range.e.r; ++R) {
           for (let C = range.s.c; C <= range.e.c; ++C) {
             const cellAddress = XLSX.utils.encode_cell({ r: R, c: C });
             if (!worksheet[cellAddress]) continue;
+            
+            let borderStyle = {
+              top: { style: "thin", color: { rgb: "E2E8F0" } },
+              bottom: { style: "thin", color: { rgb: "E2E8F0" } },
+              left: { style: "thin", color: { rgb: "CBD5E1" } },
+              right: { style: "thin", color: { rgb: "CBD5E1" } }
+            };
+
+            // Check for separators
+            if (C > 0 && R > 4) {
+              const sectionIndex = C - 1;
+              if (sectionIndex < filteredSections.length - 1) {
+                const currentSection = filteredSections[sectionIndex];
+                const nextSection = filteredSections[sectionIndex + 1];
+                
+                // Year separator (thick border)
+                if (needsSeparator(currentSection, nextSection, 'year')) {
+                  borderStyle.right = { style: "thick", color: { rgb: "1E293B" } };
+                }
+                // Group separator (medium border)
+                else if (needsSeparator(currentSection, nextSection, 'group')) {
+                  borderStyle.right = { style: "medium", color: { rgb: "475569" } };
+                }
+              }
+            }
             
             if (R === 0) {
               worksheet[cellAddress].s = {
@@ -256,6 +359,21 @@ const TimetableView = () => {
               };
             }
             else if (R === 4) {
+              // Check for separators in header
+              if (C > 0 && C < filteredSections.length) {
+                const sectionIndex = C - 1;
+                if (sectionIndex < filteredSections.length - 1) {
+                  const currentSection = filteredSections[sectionIndex];
+                  const nextSection = filteredSections[sectionIndex + 1];
+                  
+                  if (needsSeparator(currentSection, nextSection, 'year')) {
+                    borderStyle.right = { style: "thick", color: { rgb: "1E293B" } };
+                  } else if (needsSeparator(currentSection, nextSection, 'group')) {
+                    borderStyle.right = { style: "medium", color: { rgb: "475569" } };
+                  }
+                }
+              }
+
               worksheet[cellAddress].s = {
                 fill: { 
                   fgColor: { rgb: C === 0 ? "334155" : "475569" }
@@ -272,10 +390,9 @@ const TimetableView = () => {
                   wrapText: true 
                 },
                 border: {
+                  ...borderStyle,
                   top: { style: "medium", color: { rgb: "1E293B" } },
-                  bottom: { style: "medium", color: { rgb: "1E293B" } },
-                  left: { style: "thin", color: { rgb: "64748B" } },
-                  right: { style: "thin", color: { rgb: "64748B" } }
+                  bottom: { style: "medium", color: { rgb: "1E293B" } }
                 }
               };
             }
@@ -344,12 +461,7 @@ const TimetableView = () => {
                   wrapText: true,
                   indent: 1
                 },
-                border: {
-                  top: { style: "thin", color: { rgb: "E2E8F0" } },
-                  bottom: { style: "thin", color: { rgb: "E2E8F0" } },
-                  left: { style: "thin", color: { rgb: "CBD5E1" } },
-                  right: { style: "thin", color: { rgb: "CBD5E1" } }
-                }
+                border: borderStyle
               };
             }
           }
@@ -409,16 +521,26 @@ const TimetableView = () => {
               <th className="day-time-header" colSpan="2">
                 Section
               </th>
-              {filteredSections.map((section) => (
-                <th key={section.sectionID} className="section-header">
-                  <div className="section-info">
-                    <div className="section-id">{section.sectionID}</div>
-                    <div className="section-details">
-                      {section.groupID} - Year {section.year}
+              {filteredSections.map((section, idx) => {
+                const isYearSeparator = idx < filteredSections.length - 1 && 
+                  needsSeparator(section, filteredSections[idx + 1], 'year');
+                const isGroupSeparator = idx < filteredSections.length - 1 && 
+                  needsSeparator(section, filteredSections[idx + 1], 'group');
+                
+                return (
+                  <th 
+                    key={section.sectionID} 
+                    className={`section-header ${isYearSeparator ? 'year-separator' : ''} ${isGroupSeparator ? 'group-separator' : ''}`}
+                  >
+                    <div className="section-info">
+                      <div className="section-id">{section.sectionID}</div>
+                      <div className="section-details">
+                        {section.groupID} - Year {section.year}
+                      </div>
                     </div>
-                  </div>
-                </th>
-              ))}
+                  </th>
+                );
+              })}
             </tr>
           </thead>
           <tbody>
@@ -438,38 +560,73 @@ const TimetableView = () => {
 
                       <td className="time-cell">{getTimeLabel(slot)}</td>
 
-                      {sectionData.map(({ section, sessionMap, occupiedSlots }) => {
-                        if (occupiedSlots.has(slotIndex)) {
-                          return null;
-                        }
+                      {(() => {
+                        const cells = [];
+                        let skipNext = 0;
 
-                        const session = sessionMap[slotIndex];
+                        sectionData.forEach(({ section, sessionMap, occupiedSlots }, sectionIdx) => {
+                          if (skipNext > 0) {
+                            skipNext--;
+                            return;
+                          }
 
-                        if (session) {
-                          return (
-                            <td
-                              key={`${section.sectionID}-${slotIndex}`}
-                              rowSpan={session.duration}
-                              className={`session-cell ${session.type.toLowerCase()}`}
-                            >
-                              <div className="session-content">
-                                <div className="course-code">{session.courseID}</div>
-                                <div className="course-name">{session.courseName}</div>
-                                <div className="instructor">{session.instructorName}</div>
-                                <div className="room">{session.roomID}</div>
-                              </div>
-                            </td>
-                          );
-                        }
+                          if (occupiedSlots.has(slotIndex)) {
+                            return;
+                          }
 
-                        return (
-                          <td
-                            key={`${section.sectionID}-${slotIndex}`}
-                            className="empty-cell"
-                          >
-                          </td>
-                        );
-                      })}
+                          const session = sessionMap[slotIndex];
+                          const isYearSeparator = sectionIdx < filteredSections.length - 1 && 
+                            needsSeparator(section, filteredSections[sectionIdx + 1], 'year');
+                          const isGroupSeparator = sectionIdx < filteredSections.length - 1 && 
+                            needsSeparator(section, filteredSections[sectionIdx + 1], 'group');
+
+                          if (session) {
+                            // Check for identical sessions in consecutive sections
+                            let colSpan = 1;
+                            for (let i = sectionIdx + 1; i < sectionData.length; i++) {
+                              const nextSession = sectionData[i].sessionMap[slotIndex];
+                              if (areSessionsIdentical(session, nextSession)) {
+                                colSpan++;
+                                skipNext++;
+                              } else {
+                                break;
+                              }
+                            }
+
+                            const lastSectionInMerge = sectionIdx + colSpan - 1;
+                            const isMergedYearSeparator = lastSectionInMerge < filteredSections.length - 1 && 
+                              needsSeparator(filteredSections[lastSectionInMerge], filteredSections[lastSectionInMerge + 1], 'year');
+                            const isMergedGroupSeparator = lastSectionInMerge < filteredSections.length - 1 && 
+                              needsSeparator(filteredSections[lastSectionInMerge], filteredSections[lastSectionInMerge + 1], 'group');
+
+                            cells.push(
+                              <td
+                                key={`${section.sectionID}-${slotIndex}`}
+                                rowSpan={session.duration}
+                                colSpan={colSpan}
+                                className={`session-cell ${session.type.toLowerCase()} ${isMergedYearSeparator ? 'year-separator' : ''} ${isMergedGroupSeparator ? 'group-separator' : ''}`}
+                              >
+                                <div className="session-content">
+                                  <div className="course-code">{session.courseID}</div>
+                                  <div className="course-name">{session.courseName}</div>
+                                  <div className="instructor">{session.instructorName}</div>
+                                  <div className="room">{session.roomID}</div>
+                                </div>
+                              </td>
+                            );
+                          } else {
+                            cells.push(
+                              <td
+                                key={`${section.sectionID}-${slotIndex}`}
+                                className={`empty-cell ${isYearSeparator ? 'year-separator' : ''} ${isGroupSeparator ? 'group-separator' : ''}`}
+                              >
+                              </td>
+                            );
+                          }
+                        });
+
+                        return cells;
+                      })()}
                     </tr>
                   );
                 })}

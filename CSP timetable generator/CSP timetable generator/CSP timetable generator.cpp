@@ -9,10 +9,13 @@
 #include <iomanip>
 #include <chrono>
 #include <stack>
+#include <random> // Added for shuffling
 
 using json = nlohmann::json;
 using namespace httplib;
 using namespace std;
+
+// --- Data Structures ---
 
 struct Course {
     string courseID, courseName, type;
@@ -54,7 +57,7 @@ struct Slot {
     string instructorID;
     int duration;
     bool istaken;
-    bool isCont;
+    bool isCont; // Is continuation of previous slot
 
     Slot() : duration(0), istaken(false), isCont(false) {}
 };
@@ -62,20 +65,20 @@ struct Slot {
 struct CSPVariable {
     int id;
     string courseID;
-    vector<int> targetSectionIndices;
+    vector<int> targetSectionIndices; // Indices in the global 'sections' vector
     int totalStudents;
 
     int duration;
-    int availableInstructorsCount;
-    bool isHardConstraint;
+    bool isHardConstraint; // e.g., Fixed schedules
 };
-
 
 struct CSPValue {
     int startSlot;
     string instructorID;
     string roomID;
 };
+
+// --- Global Data Storage ---
 
 vector<Course> courses;
 vector<Instructor> instructors;
@@ -87,18 +90,24 @@ const int SLOTS_MAX = 40;
 int SECTIONS_MAX;
 vector<vector<Slot>> Timetable;
 
+// Index maps
 unordered_map<string, int> sectionToIndex;
 unordered_map<string, vector<int>> groupToSectionIndices;
+unordered_map<int, vector<int>> yearToSectionIndices; // New: Map Year -> List of Section Indices
 unordered_map<string, Course> getCourse;
 
+// Constraint Sets
 unordered_set<string> instructorBusy[SLOTS_MAX];
 unordered_set<string> roomBusy[SLOTS_MAX];
 vector<unordered_set<string>> sectionScheduledCourses;
 
 string lastError = "";
 int iterationCount = 0;
-const int MAX_ITERATIONS = 5000000;
+const int MAX_ITERATIONS = 2000000; // Reduced slightly to allow for retries
+const int MAX_RETRIES = 5;          // Number of times to shuffle and retry
 auto startTime = chrono::steady_clock::now();
+
+// --- Helper Functions ---
 
 string getInstructorName(string instructorID) {
     for (auto& inst : instructors) if (inst.instructorID == instructorID) return inst.name;
@@ -137,6 +146,46 @@ bool isQualified(string instructorID, string courseID) {
     }
     return false;
 }
+
+// --- Validation Logic (New) ---
+
+vector<string> validateInput() {
+    vector<string> errors;
+
+    // 1. Check if assigned courses exist
+    for (const auto& sec : sections) {
+        for (const auto& cID : sec.assignedCourses) {
+            if (getCourse.find(cID) == getCourse.end()) {
+                errors.push_back("Section " + sec.sectionID + " is assigned unknown course: " + cID);
+            }
+        }
+    }
+
+    // 2. Check if every course has at least one qualified instructor
+    for (const auto& course : courses) {
+        bool hasQualified = false;
+        for (const auto& inst : instructors) {
+            if (isQualified(inst.instructorID, course.courseID)) {
+                hasQualified = true; break;
+            }
+        }
+        if (!hasQualified) {
+            for (const auto& ta : tas) {
+                if (isQualified(ta.taID, course.courseID)) {
+                    hasQualified = true; break;
+                }
+            }
+        }
+
+        if (!hasQualified) {
+            errors.push_back("Course " + course.courseName + " (" + course.courseID + ") has no qualified instructors or TAs.");
+        }
+    }
+
+    return errors;
+}
+
+// --- CSP Logic ---
 
 void applyMove(const CSPVariable& var, const CSPValue& val) {
     string type = getCourse[var.courseID].type;
@@ -185,7 +234,8 @@ void undoMove(const CSPVariable& var, const CSPValue& val) {
 
 bool isValidMove(const CSPVariable& var, const CSPValue& val) {
     if (val.startSlot + var.duration > SLOTS_MAX) return false;
-    if (var.duration > 1 && val.startSlot % var.duration != 0) return false;
+    // Constraint: Slots larger than 1 hour should align (heuristic, optional)
+    // if (var.duration > 1 && val.startSlot % var.duration != 0) return false; 
 
     for (int s = val.startSlot; s < val.startSlot + var.duration; s++) {
         if (!isInstructorAvailable(val.instructorID, s)) return false;
@@ -217,6 +267,7 @@ vector<CSPValue> generateDomain(const CSPVariable& var) {
     if (qualifiedInstructors.empty()) return domain;
 
     vector<string> qualifiedRooms;
+    // Specific hardcoded constraint for GRAD courses if needed
     if (var.courseID == "GRAD1" || var.courseID == "GRAD2") {
         qualifiedRooms.push_back("");
     }
@@ -224,15 +275,17 @@ vector<CSPValue> generateDomain(const CSPVariable& var) {
         for (auto& room : rooms) {
             if (room.type != c.type) continue;
             if (c.type == "Lab" && !c.labType.empty() && room.labType != c.labType) continue;
-            if (!c.allYear && room.capacity < var.totalStudents) continue;
+            // Capacity Check: Must hold total students of all combined sections
+            if (room.capacity < var.totalStudents) continue;
             qualifiedRooms.push_back(room.roomID);
         }
     }
 
-    if (qualifiedRooms.empty()) return domain;
+    if (qualifiedRooms.empty() && var.courseID != "GRAD1" && var.courseID != "GRAD2") return domain;
 
     for (int slot = 0; slot <= SLOTS_MAX - c.duration; slot++) {
 
+        // Check Section Availability first
         bool sectionsFree = true;
         for (int secIdx : var.targetSectionIndices) {
             for (int s = slot; s < slot + c.duration; s++) {
@@ -243,6 +296,7 @@ vector<CSPValue> generateDomain(const CSPVariable& var) {
         if (!sectionsFree) continue;
 
         for (const string& instID : qualifiedInstructors) {
+            // Optimization: check instructor availability before checking rooms
             bool instFree = true;
             for (int s = slot; s < slot + c.duration; s++) {
                 if (!isInstructorAvailable(instID, s)) { instFree = false; break; }
@@ -262,14 +316,19 @@ vector<CSPValue> generateDomain(const CSPVariable& var) {
         }
     }
 
+    // Heuristic: Shuffle domain to add randomness during retries could be added here, 
+    // but the main shuffle happens at variable ordering.
     return domain;
 }
+
+// --- Variable Identification (Modified for allYear logic) ---
 
 vector<CSPVariable> identifyVariables() {
     vector<CSPVariable> variables;
     int varIdCounter = 0;
 
     unordered_set<string> processedGroupCourses;
+    unordered_set<string> processedYearCourses; // Track yearly courses
 
     for (int i = 0; i < sections.size(); i++) {
         Section& sec = sections[i];
@@ -278,11 +337,35 @@ vector<CSPVariable> identifyVariables() {
             if (getCourse.find(cID) == getCourse.end()) continue;
             Course& c = getCourse[cID];
 
-            if (c.type == "Lecture" || c.allYear) {
-                string groupKey = sec.groupID + "_" + cID;
-                if (processedGroupCourses.find(groupKey) != processedGroupCourses.end()) {
-                    continue;
+            if (c.allYear) {
+                // New Logic: Group by Year
+                string yearKey = to_string(sec.year) + "_" + cID;
+                if (processedYearCourses.count(yearKey)) continue;
+
+                CSPVariable var;
+                var.id = varIdCounter++;
+                var.courseID = cID;
+                var.isHardConstraint = (cID == "GRAD1" || cID == "GRAD2");
+                var.duration = c.duration;
+
+                // Get all sections for this year
+                if (yearToSectionIndices.count(sec.year)) {
+                    var.targetSectionIndices = yearToSectionIndices[sec.year];
                 }
+                else {
+                    var.targetSectionIndices.push_back(i); // Fallback
+                }
+
+                var.totalStudents = 0;
+                for (int idx : var.targetSectionIndices) var.totalStudents += sections[idx].studentCount;
+
+                variables.push_back(var);
+                processedYearCourses.insert(yearKey);
+            }
+            else if (c.type == "Lecture") {
+                // Existing Logic: Group by GroupID
+                string groupKey = sec.groupID + "_" + cID;
+                if (processedGroupCourses.count(groupKey)) continue;
 
                 CSPVariable var;
                 var.id = varIdCounter++;
@@ -300,12 +383,11 @@ vector<CSPVariable> identifyVariables() {
                 var.totalStudents = 0;
                 for (int idx : var.targetSectionIndices) var.totalStudents += sections[idx].studentCount;
 
-                var.availableInstructorsCount = 0;
-
                 variables.push_back(var);
                 processedGroupCourses.insert(groupKey);
             }
             else {
+                // Individual Sections (Labs/Tutorials usually)
                 CSPVariable var;
                 var.id = varIdCounter++;
                 var.courseID = cID;
@@ -319,23 +401,13 @@ vector<CSPVariable> identifyVariables() {
         }
     }
 
-    sort(variables.begin(), variables.end(), [](const CSPVariable& a, const CSPVariable& b) {
-        if (a.isHardConstraint != b.isHardConstraint) return a.isHardConstraint > b.isHardConstraint;
-
-        if (a.duration != b.duration) return a.duration > b.duration;
-
-        if (a.totalStudents != b.totalStudents) return a.totalStudents > b.totalStudents;
-
-        return a.targetSectionIndices.size() > b.targetSectionIndices.size();
-        });
-
     return variables;
 }
 
-bool solveIterative() {
-    vector<CSPVariable> variables = identifyVariables();
-    int n = variables.size();
+// --- Solver ---
 
+bool solveIterative(vector<CSPVariable>& variables) {
+    int n = variables.size();
     if (n == 0) return true;
 
     vector<vector<CSPValue>> domains(n);
@@ -346,7 +418,8 @@ bool solveIterative() {
 
     while (depth >= 0 && depth < n) {
         auto currentTime = chrono::steady_clock::now();
-        if (chrono::duration_cast<chrono::seconds>(currentTime - startTime).count() > 60) {
+        // Global timeout check
+        if (chrono::duration_cast<chrono::seconds>(currentTime - startTime).count() > 30) {
             lastError = "Timeout limit reached.";
             return false;
         }
@@ -368,9 +441,14 @@ bool solveIterative() {
 
             CSPValue& val = domains[depth][domainIndices[depth]];
 
-            applyMove(variables[depth], val);
-            foundAssignment = true;
-            break;
+            // Basic forward check happens inside isValidMove called during Apply? 
+            // Here we just assume domain generation filtered basics.
+            // But we must check against CURRENT state (which changes during recursion)
+            if (isValidMove(variables[depth], val)) {
+                applyMove(variables[depth], val);
+                foundAssignment = true;
+                break;
+            }
         }
 
         if (foundAssignment) {
@@ -380,19 +458,20 @@ bool solveIterative() {
                 domainIndices[depth] = -1;
 
                 if (domains[depth].empty()) {
-                    if (depth > 0) {
-                    }
+                    // Backtrack immediately if no options for next variable
                 }
             }
         }
         else {
-            if (lastError == "") {
-                lastError = "Unable to schedule " + getCourse[variables[depth].courseID].courseName +
-                    " (Depth " + to_string(depth) + ")";
+            // Save error for diagnostics if we fail at root
+            if (depth == 0) {
+                lastError = "Unable to schedule " + getCourse[variables[depth].courseID].courseName + " (Root)";
+            }
+            else if (lastError == "") {
+                lastError = "Unable to schedule " + getCourse[variables[depth].courseID].courseName + " at depth " + to_string(depth);
             }
 
-            domains[depth].clear();
-
+            domains[depth].clear(); // Free memory
             depth--;
 
             if (depth >= 0) {
@@ -405,7 +484,9 @@ bool solveIterative() {
     return (depth == n);
 }
 
-void clearData() {
+// --- Management Functions ---
+
+void clearGlobalData() {
     courses.clear();
     instructors.clear();
     tas.clear();
@@ -414,9 +495,21 @@ void clearData() {
     getCourse.clear();
     sectionToIndex.clear();
     groupToSectionIndices.clear();
+    yearToSectionIndices.clear();
 
     Timetable.clear();
     sectionScheduledCourses.clear();
+
+    for (int i = 0; i < SLOTS_MAX; i++) {
+        instructorBusy[i].clear();
+        roomBusy[i].clear();
+    }
+}
+
+// Resets only the scheduling state, keeps inputs (Courses, Sections, etc.)
+void resetSimulationState() {
+    Timetable.assign(SLOTS_MAX, vector<Slot>(SECTIONS_MAX, Slot()));
+    sectionScheduledCourses.assign(SECTIONS_MAX, unordered_set<string>());
 
     for (int i = 0; i < SLOTS_MAX; i++) {
         instructorBusy[i].clear();
@@ -428,7 +521,7 @@ void clearData() {
 }
 
 void parseInputData(const json& inputData) {
-    clearData();
+    clearGlobalData();
 
     if (inputData.contains("courses")) {
         for (auto c : inputData["courses"]) {
@@ -501,11 +594,13 @@ void parseInputData(const json& inputData) {
             sections.push_back(section);
             sectionToIndex[section.sectionID] = idx;
             groupToSectionIndices[section.groupID].push_back(idx);
+            yearToSectionIndices[section.year].push_back(idx); // Populate Year Map
             idx++;
         }
     }
 
     SECTIONS_MAX = sections.size();
+    // Resize is handled in resetSimulationState, but good to init here
     Timetable.resize(SLOTS_MAX, vector<Slot>(SECTIONS_MAX, Slot()));
     sectionScheduledCourses.resize(SECTIONS_MAX);
 }
@@ -521,6 +616,7 @@ json timetableToJson() {
         json sectionData;
         sectionData["sectionID"] = sections[j].sectionID;
         sectionData["groupID"] = sections[j].groupID;
+        sectionData["year"] = sections[j].year;
 
         json schedule = json::array();
 
@@ -561,12 +657,60 @@ int main() {
             json inputData = json::parse(req.body);
             parseInputData(inputData);
 
+            // 1. Validate Input
+            vector<string> validationErrors = validateInput();
+            if (!validationErrors.empty()) {
+                json errResponse;
+                errResponse["success"] = false;
+                errResponse["error"] = "Input validation failed";
+                errResponse["details"] = validationErrors;
+                res.set_content(errResponse.dump(2), "application/json");
+                res.status = 400;
+                cout << "Validation Failed: " << validationErrors.size() << " errors found." << endl;
+                return;
+            }
+
             startTime = chrono::steady_clock::now();
+            resetSimulationState();
 
-            cout << "Starting Iterative CSP Solver..." << endl;
-            cout << "Variables to schedule: " << sections.size() << " sections (raw)" << endl;
+            // 2. Identify Variables
+            vector<CSPVariable> variables = identifyVariables();
 
-            bool success = solveIterative();
+            cout << "Starting CSP Solver..." << endl;
+            cout << "Variables to schedule: " << variables.size() << endl;
+
+            // 3. Initial Heuristic Sort (Most Constrained First)
+            // Sort priority: Hard Constraints > Longest Duration > Largest Student Count > Most Sections
+            sort(variables.begin(), variables.end(), [](const CSPVariable& a, const CSPVariable& b) {
+                if (a.isHardConstraint != b.isHardConstraint) return a.isHardConstraint > b.isHardConstraint;
+                if (a.duration != b.duration) return a.duration > b.duration;
+                if (a.totalStudents != b.totalStudents) return a.totalStudents > b.totalStudents;
+                return a.targetSectionIndices.size() > b.targetSectionIndices.size();
+                });
+
+            // 4. Attempt to Solve (Initial Attempt)
+            bool success = solveIterative(variables);
+
+            // 5. Retry Logic with Random Shuffling if failed
+            int attempts = 0;
+            std::random_device rd;
+            std::mt19937 g(rd());
+
+            while (!success && attempts < MAX_RETRIES) {
+                cout << "Solution attempt " << (attempts + 1) << " failed. Shuffling variables and retrying..." << endl;
+
+                resetSimulationState(); // Clear the board
+
+                // Shuffle the order of variables to escape local optima or bad search trees
+                // We keep Hard Constraints at the front to ensure critical items get slots, 
+                // but shuffle the rest, or shuffle everything if necessary.
+                // Here we perform a full shuffle for maximum variation as requested.
+                std::shuffle(variables.begin(), variables.end(), g);
+
+                startTime = chrono::steady_clock::now(); // Reset timer for the new attempt
+                success = solveIterative(variables);
+                attempts++;
+            }
 
             auto endTime = chrono::steady_clock::now();
             auto duration = chrono::duration_cast<chrono::milliseconds>(endTime - startTime).count();
@@ -574,17 +718,18 @@ int main() {
             json response;
             if (success) {
                 response = timetableToJson();
-                cout << "SUCCESS: Timetable generated in " << duration << "ms (" << iterationCount << " iterations)" << endl;
+                cout << "SUCCESS: Timetable generated in " << duration << "ms (Attempts: " << attempts + 1 << ")" << endl;
             }
             else {
                 response["success"] = false;
-                response["error"] = lastError.empty() ? "No valid solution found." : lastError;
+                response["error"] = lastError.empty() ? "No valid solution found after multiple attempts." : lastError;
                 response["iterations"] = iterationCount;
+                response["attempts"] = attempts + 1;
                 cout << "FAILED: " << lastError << endl;
             }
 
             response["diagnostics"]["timeTakenMs"] = duration;
-            response["diagnostics"]["iterations"] = iterationCount;
+            response["diagnostics"]["totalAttempts"] = attempts + 1;
 
             res.set_content(response.dump(2), "application/json");
             res.set_header("Access-Control-Allow-Origin", "*");
@@ -609,7 +754,10 @@ int main() {
         });
 
     cout << "CSP Timetable Server running at http://0.0.0.0:8080" << endl;
-    svr.listen("0.0.0.0", 8080);
+    if (!svr.listen("0.0.0.0", 8080)) {
+        cerr << "Error: Could not start server on port 8080." << endl;
+        return 1;
+    }
 
     return 0;
 }
